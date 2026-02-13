@@ -1,3 +1,5 @@
+name: Blog to Cafe24 Auto Post
+
 on:
   push:
     branches: [ main ]
