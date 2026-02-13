@@ -13,36 +13,32 @@ def get_access_token():
     auth = base64.b64encode(f"{CLIENT_ID}:{CLIENT_SECRET}".encode()).decode()
     data = {"grant_type": "refresh_token", "refresh_token": REFRESH_TOKEN}
     headers = {"Authorization": f"Basic {auth}", "Content-Type": "application/x-www-form-urlencoded"}
-    res = requests.post(url, headers=headers, data=data).json()
-    return res.get('access_token')
+    return requests.post(url, headers=headers, data=data).json().get('access_token')
 
 def get_latest_naver_post():
     rss_url = f"https://rss.blog.naver.com/{NAVER_BLOG_ID}.xml"
     res = requests.get(rss_url)
-    soup = BeautifulSoup(res.content, 'xml') # XML 파서 사용
+    # 네이버 RSS는 'xml' 파서로 읽어야 링크가 깨지지 않습니다.
+    soup = BeautifulSoup(res.content, 'xml') 
     item = soup.find('item')
     
     if item:
-        post_link = item.find('link').text
-        post_title = item.find('title').text
-        # 로그에 정확한 타겟 URL 출력
-        print(f"\n🔎 [분석 중] 네이버 최신글 발견!")
-        print(f"📌 제목: {post_title}")
-        print(f"🔗 주소: {post_link}\n")
+        # 깨진 URL이 아닌 진짜 link 텍스트만 추출
+        original_link = item.find('link').text.strip()
+        print(f"📍 추출된 진짜 URL: {original_link}")
         
         return {
-            "title": post_title,
+            "title": item.find('title').text,
             "description": item.find('description').text,
-            "link": post_link
+            "link": original_link
         }
     return None
 
-def run_strategy_b():
+def run_fix_v2():
     token = get_access_token()
     post = get_latest_naver_post()
     
-    if not token or not post:
-        return print("❌ 데이터 로드 실패 (토큰 또는 블로그 확인 필요)")
+    if not token or not post: return print("❌ 데이터 로드 실패")
 
     url = f"https://{MALL_ID}.cafe24api.com/api/v2/admin/boards/8/articles"
     headers = {
@@ -51,8 +47,14 @@ def run_strategy_b():
         "X-Cafe24-Api-Version": "2023-03-01"
     }
     
-    # 레이아웃 최적화
-    content_html = f"<div style='font-family:sans-serif; line-height:1.8;'>{post['description']}</div>"
+    # 전략 B: 원본 링크를 하단에 추가하여 '상세보기' 연결 보장
+    content_html = f"""
+    <div style='font-family:sans-serif; line-height:1.8;'>
+        {post['description']}
+        <br><br>
+        <p><a href='{post['link']}' target='_blank' style='color:#007bff;'>👉 네이버 블로그에서 원문 보기</a></p>
+    </div>
+    """
     
     payload = {
         "request": {
@@ -64,9 +66,9 @@ def run_strategy_b():
     
     res = requests.post(url, json=payload, headers=headers)
     if res.status_code == 201:
-        print(f"✅ [성공] 느낌연구소(8번)에 포스팅 완료!")
+        print(f"✅ 드디어 성공! URL 오류를 수정하여 게시했습니다.")
     else:
-        print(f"❌ [실패] 에러 내용: {res.json()}")
+        print(f"❌ 포스팅 실패 상세: {res.json()}")
 
 if __name__ == "__main__":
-    run_strategy_b()
+    run_fix_v2()
