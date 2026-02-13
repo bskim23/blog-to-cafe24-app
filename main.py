@@ -1,83 +1,116 @@
-import os, requests, base64
-from bs4 import BeautifulSoup
+import os
+import sys
+import requests
+import base64
+import json
+from datetime import datetime
 
-# [설정] 대표님 정보
-CLIENT_ID = os.environ.get('CLIENT_ID', '').strip()
-CLIENT_SECRET = os.environ.get('CLIENT_SECRET', '').strip()
-REFRESH_TOKEN = os.environ.get('REFRESH_TOKEN', '').strip()
-MALL_ID = "pp1125"
-NAVER_BLOG_ID = "mediheally_lab"
+# ==============================================================================
+# 1. GitHub Secrets 환경변수 가져오기
+# ==============================================================================
+MALL_ID = os.environ.get('CAFE24_MALL_ID')
+CLIENT_ID = os.environ.get('CAFE24_CLIENT_ID')
+CLIENT_SECRET = os.environ.get('CAFE24_CLIENT_SECRET')
+REFRESH_TOKEN = os.environ.get('CAFE24_REFRESH_TOKEN')
 
+# 필수 정보가 없으면 바로 종료 (디버깅용)
+if not all([MALL_ID, CLIENT_ID, CLIENT_SECRET, REFRESH_TOKEN]):
+    print("❌ [오류] 필수 환경변수(Secrets)가 누락되었습니다.")
+    print(f"- MALL_ID: {MALL_ID}")
+    print(f"- CLIENT_ID: {'OK' if CLIENT_ID else 'Missing'}")
+    print(f"- CLIENT_SECRET: {'OK' if CLIENT_SECRET else 'Missing'}")
+    print(f"- REFRESH_TOKEN: {'OK' if REFRESH_TOKEN else 'Missing'}")
+    sys.exit(1)
+
+# ==============================================================================
+# 2. 핵심: 토큰 갱신 함수 (이게 401 에러를 해결합니다!)
+# ==============================================================================
 def get_access_token():
+    """
+    Refresh Token을 사용해 새 Access Token을 발급받습니다.
+    (Cafe24 규격인 Basic Auth 헤더를 정확히 생성합니다.)
+    """
     url = f"https://{MALL_ID}.cafe24api.com/api/v2/oauth/token"
     
-    # 1. Basic Auth 헤더 생성 (공식 가이드 방식)
+    # 1. Client ID와 Secret을 'ID:Secret' 형태로 합치고 Base64로 암호화
     auth_str = f"{CLIENT_ID}:{CLIENT_SECRET}"
-    encoded_auth = base64.b64encode(auth_str.encode('utf-8')).decode('utf-8')
+    auth_bytes = auth_str.encode('ascii')
+    auth_b64 = base64.b64encode(auth_bytes).decode('ascii')
     
+    # 2. 헤더에 'Basic 암호문'을 넣어서 전송 (중요!)
     headers = {
-        "Authorization": f"Basic {encoded_auth}",
+        "Authorization": f"Basic {auth_b64}",
         "Content-Type": "application/x-www-form-urlencoded"
     }
     
-    # 2. 전송 데이터 구성
-    payload = {
+    data = {
         "grant_type": "refresh_token",
         "refresh_token": REFRESH_TOKEN
     }
     
-    # 3. 요청 및 응답 확인
-    res = requests.post(url, headers=headers, data=payload)
+    print("🔄 [1/2] 토큰 갱신 시도 중...")
     
-    if res.status_code == 200:
-        return res.json().get('access_token')
-    else:
-        # 실패 시 로그를 남겨 원인을 파악합니다.
-        print(f"❌ 카페24 서버 응답 에러 ({res.status_code}): {res.text}")
+    try:
+        response = requests.post(url, headers=headers, data=data)
+        response.raise_for_status() # 에러 발생 시 예외 처리
+    except requests.exceptions.RequestException as e:
+        print(f"❌ 토큰 갱신 실패: {e}")
+        print(f"응답 내용: {response.text if 'response' in locals() else '응답 없음'}")
         return None
 
-def run_final():
-    token = get_access_token()
-    if not token:
-        return # 실패 로그는 위에서 출력됨
+    result = response.json()
+    new_access_token = result.get('access_token')
+    
+    if new_access_token:
+        print("✅ 토큰 갱신 성공!")
+        return new_access_token
+    else:
+        print("❌ 응답에 access_token이 없습니다.")
+        return None
 
-    # 네이버 RSS 데이터 가져오기 (lxml 활용)
-    try:
-        rss_url = f"https://rss.blog.naver.com/{NAVER_BLOG_ID}.xml"
-        res = requests.get(rss_url)
-        soup = BeautifulSoup(res.content, 'xml')
-        item = soup.find('item')
-        
-        if not item:
-            return print("❌ 네이버 블로그 글을 찾을 수 없습니다.")
+# ==============================================================================
+# 3. 테스트: 게시판 목록 조회 (연동 확인용)
+# ==============================================================================
+def check_connection(access_token):
+    """
+    발급받은 토큰으로 API가 잘 호출되는지 테스트합니다.
+    """
+    url = f"https://{MALL_ID}.cafe24api.com/api/v2/admin/boards"
+    
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json",
+        "X-Cafe24-Api-Version": "2024-06-01"
+    }
+    
+    print("📡 [2/2] API 연결 테스트 (게시판 목록 조회)...")
+    response = requests.get(url, headers=headers)
+    
+    if response.status_code == 200:
+        boards = response.json().get('boards', [])
+        print(f"🎉 연결 성공! (발견된 게시판 수: {len(boards)}개)")
+        return True
+    else:
+        print(f"❌ API 호출 실패 (HTTP {response.status_code})")
+        print(f"에러 메시지: {response.text}")
+        return False
 
-        post_title = item.title.get_text()
-        post_content = item.description.get_text()
+# ==============================================================================
+# 4. 메인 실행
+# ==============================================================================
+def main():
+    print(f"🚀 스크립트 시작: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    
+    # 1. 토큰 갱신
+    access_token = get_access_token()
+    if not access_token:
+        sys.exit(1)
         
-        # 카페24 게시판 포스팅
-        post_url = f"https://{MALL_ID}.cafe24api.com/api/v2/admin/boards/8/articles"
-        post_headers = {
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json",
-            "X-Cafe24-Api-Version": "2023-03-01"
-        }
-        
-        payload = {
-            "request": {
-                "title": post_title,
-                "content": f"<div style='line-height:1.8; font-size:15px;'>{post_content}</div>",
-                "author": "메디힐리"
-            }
-        }
-        
-        post_res = requests.post(post_url, json=payload, headers=post_headers)
-        if post_res.status_code == 201:
-            print(f"✅ [대성공] 느낌연구소에 '{post_title}' 등록 완료!")
-        else:
-            print(f"❌ 포스팅 실패 상세: {post_res.json()}")
-            
-    except Exception as e:
-        print(f"❌ 실행 중 오류 발생: {str(e)}")
+    # 2. 연결 확인 (성공하면 이후에 글쓰기 로직을 추가하면 됩니다)
+    if check_connection(access_token):
+        print("\n✅ 모든 시스템이 정상입니다. 이제 글을 올릴 준비가 되었습니다.")
+    else:
+        sys.exit(1)
 
 if __name__ == "__main__":
-    run_final()
+    main()
