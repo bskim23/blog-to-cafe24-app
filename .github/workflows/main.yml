@@ -3,19 +3,24 @@ name: Daily Blog to Cafe24 (Strategy B)
 on:
   schedule:
     - cron: '0 0 * * *' # 매일 자정 자동 실행
-  workflow_dispatch: # 수동 실행 버튼 생성
+  workflow_dispatch: # 수동 실행 버튼 활성화
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout code
+        uses: actions/checkout@v3
+
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.9'
+
       - name: Install dependencies
-        run: pip install requests beautifulsoup4
+        # BeautifulSoup과 함께 XML 파싱을 돕는 lxml을 반드시 설치해야 합니다.
+        run: pip install requests beautifulsoup4 lxml
+
       - name: Run Auto Post
         env:
           CLIENT_ID: ${{ secrets.CLIENT_ID }}
