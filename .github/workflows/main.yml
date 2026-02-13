@@ -5,9 +5,6 @@ on:
     branches: [ main, master ]
   workflow_dispatch:
 
-permissions:
-  contents: read
-
 jobs:
   update-token-and-post:
     runs-on: ubuntu-latest
@@ -23,10 +20,7 @@ jobs:
       - name: Install dependencies
         run: pip install requests
 
-      # 1. 파이썬 실행 (토큰 갱신 -> 글쓰기 시도)
-      # 글쓰기가 실패해도 토큰은 이미 파일에 기록된 상태로 종료됩니다.
       - name: Run script
-        id: run_script
         env:
           CAFE24_MALL_ID: ${{ secrets.CAFE24_MALL_ID }}
           CAFE24_CLIENT_ID: ${{ secrets.CAFE24_CLIENT_ID }}
@@ -34,18 +28,12 @@ jobs:
           CAFE24_REFRESH_TOKEN: ${{ secrets.CAFE24_REFRESH_TOKEN }}
         run: python main.py
 
-      # 2. [★핵심] 토큰 자동 저장 (무조건 실행)
-      # if: always() -> 앞 단계(글쓰기)가 실패해도 이 단계는 무조건 실행됩니다!
       - name: Update Refresh Token Secret
-        if: always() 
+        if: always()
         env:
           GH_TOKEN: ${{ secrets.PA_TOKEN }}
         run: |
-          # 새 토큰이 발급되었다면(파일에 기록되었다면) 즉시 금고에 저장
           if [ -n "$NEW_REFRESH_TOKEN" ]; then
-            echo "🔄 생존 신고: 새 토큰을 안전하게 저장합니다..."
             gh secret set CAFE24_REFRESH_TOKEN --body "$NEW_REFRESH_TOKEN"
-            echo "✅ 저장 완료! (글쓰기 실패 여부와 상관없이 토큰은 살렸습니다)"
-          else
-            echo "⚠️ 새 토큰이 발견되지 않았습니다. (토큰 갱신 단계에서 실패했을 수 있음)"
+            echo "✅ 토큰 갱신 완료"
           fi
