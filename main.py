@@ -12,8 +12,8 @@ CLIENT_ID = os.environ.get('CAFE24_CLIENT_ID')
 CLIENT_SECRET = os.environ.get('CAFE24_CLIENT_SECRET')
 REFRESH_TOKEN = os.environ.get('CAFE24_REFRESH_TOKEN')
 
-# 가장 범용적인 안정 버전
-API_VERSION = "2024-03-01"
+# 카페24가 요구한 강제 버전
+API_VERSION = "2025-12-01"
 
 def get_access_token():
     url = f"https://{MALL_ID}.cafe24api.com/api/v2/oauth/token"
@@ -34,7 +34,7 @@ def get_access_token():
         return None
 
 def get_latest_rss(rss_url):
-    print(f"📡 [RSS] 읽기 시도: {rss_url}")
+    print(f"📡 [RSS] 읽기: {rss_url}")
     try:
         response = requests.get(rss_url, timeout=15)
         response.encoding = 'utf-8'
@@ -45,7 +45,6 @@ def get_latest_rss(rss_url):
         title = item.find('title').text
         link = item.find('link').text
         desc = item.find('description').text
-        # 본문에서 첫 번째 이미지 추출
         img_match = re.search(r'<img[^>]+src="([^">]+)"', desc)
         first_img = img_match.group(1) if img_match else None
         
@@ -55,12 +54,7 @@ def get_latest_rss(rss_url):
         return None
 
 def write_post(access_token, post_data):
-    """
-    [최후의 전략] 
-    1. 비밀번호 제거 
-    2. 이미지 업로드 생략 (네이버 원본 링크 사용) 
-    3. 필수 필드 최소화
-    """
+    """카페24 강제 버전(2025-12-01) 적용 및 최소 필수 필드 구성"""
     print("📡 [게시판] 전송 시작...")
     board_no = 8
     url = f"https://{MALL_ID}.cafe24api.com/api/v2/admin/boards/{board_no}/articles"
@@ -71,19 +65,19 @@ def write_post(access_token, post_data):
         "X-Cafe24-Api-Version": API_VERSION
     }
     
-    # 본문 구성 (이미지 포함)
+    # 본문 구성 (이미지 링크 포함)
     content_html = ""
     if post_data['img']:
         content_html += f'<div style="text-align:center;"><img src="{post_data["img"]}" style="max-width:100%;"></div><br>'
     content_html += f'{post_data["content"]}<br><br><a href="{post_data["link"]}" target="_blank">원문 보기</a>'
 
-    # [초간결 페이로드] 카페24 관리자 포스팅 최소 규격
+    # 카페24 공식 가이드에 따른 최소 필수 필드
     payload = {
         "shop_no": 1,
         "request": {
             "title": post_data['title'],
             "content": content_html,
-            "writer": "pp1125", # 카페24 ID
+            "writer": "pp1125",
             "is_notice": "F",
             "is_secret": "F"
         }
@@ -93,9 +87,10 @@ def write_post(access_token, post_data):
     print(f"📤 결과 코드: {response.status_code}")
     
     if response.status_code == 201:
-        print(f"🎉 성공: {post_data['title']}")
+        print(f"🎉 드디어 성공: {post_data['title']}")
     else:
-        print(f"❌ 실패 사유: {response.text}")
+        # 에러 발생 시 카페24가 보내주는 상세 메시지 출력
+        print(f"❌ 실패 상세: {response.text}")
 
 if __name__ == "__main__":
     token = get_access_token()
