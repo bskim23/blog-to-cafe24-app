@@ -18,26 +18,25 @@ def get_access_token():
 def get_latest_naver_post():
     rss_url = f"https://rss.blog.naver.com/{NAVER_BLOG_ID}.xml"
     res = requests.get(rss_url)
-    # 네이버 RSS는 'xml' 파서로 읽어야 링크가 깨지지 않습니다.
-    soup = BeautifulSoup(res.content, 'xml') 
+    # xml 파서가 없을 경우를 대비해 기본 파서를 쓰되, 구조를 더 정확히 짚도록 수정했습니다.
+    soup = BeautifulSoup(res.content, 'html.parser') 
     item = soup.find('item')
     
     if item:
-        # 깨진 URL이 아닌 진짜 link 텍스트만 추출
-        original_link = item.find('link').text.strip()
-        print(f"📍 추출된 진짜 URL: {original_link}")
+        # RSS 내부의 link는 태그 안에 텍스트로 존재하므로 명확히 추출합니다.
+        post_link = item.find('link').next_sibling.strip() if item.find('link') else "URL 확인 불가"
+        print(f"📍 타겟팅 URL: {post_link}")
         
         return {
-            "title": item.find('title').text,
-            "description": item.find('description').text,
-            "link": original_link
+            "title": item.find('title').get_text(),
+            "description": item.find('description').get_text(),
+            "link": post_link
         }
     return None
 
-def run_fix_v2():
+def run_fix_v3():
     token = get_access_token()
     post = get_latest_naver_post()
-    
     if not token or not post: return print("❌ 데이터 로드 실패")
 
     url = f"https://{MALL_ID}.cafe24api.com/api/v2/admin/boards/8/articles"
@@ -47,14 +46,8 @@ def run_fix_v2():
         "X-Cafe24-Api-Version": "2023-03-01"
     }
     
-    # 전략 B: 원본 링크를 하단에 추가하여 '상세보기' 연결 보장
-    content_html = f"""
-    <div style='font-family:sans-serif; line-height:1.8;'>
-        {post['description']}
-        <br><br>
-        <p><a href='{post['link']}' target='_blank' style='color:#007bff;'>👉 네이버 블로그에서 원문 보기</a></p>
-    </div>
-    """
+    # 본문 구성
+    content_html = f"<div style='line-height:1.8;'>{post['description']}<br><br><a href='{post['link']}'>원문 보기</a></div>"
     
     payload = {
         "request": {
@@ -66,9 +59,9 @@ def run_fix_v2():
     
     res = requests.post(url, json=payload, headers=headers)
     if res.status_code == 201:
-        print(f"✅ 드디어 성공! URL 오류를 수정하여 게시했습니다.")
+        print(f"✅ 드디어 성공! 파서 에러를 해결했습니다.")
     else:
-        print(f"❌ 포스팅 실패 상세: {res.json()}")
+        print(f"❌ 포스팅 실패: {res.json()}")
 
 if __name__ == "__main__":
-    run_fix_v2()
+    run_fix_v3()
