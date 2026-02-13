@@ -30,44 +30,51 @@ def get_access_token():
     except: return None
 
 def get_latest_rss(rss_url):
+    print(f"📡 RSS 읽기: {rss_url}")
     try:
         res = requests.get(rss_url, timeout=15)
         res.encoding = 'utf-8'
         root = ET.fromstring(res.text)
         item = root.find('.//item')
         if item is None: return None
-        title = item.find('title').text
-        link = item.find('link').text
+        
         desc = item.find('description').text
-        img_match = re.search(r'<img[^>]+src="([^">]+)"', desc)
-        return {"title": title, "link": link, "content": desc, "img": img_match.group(1) if img_match else None}
+        # 본문에서 모든 이미지 주소 추출 (최대 5개 제한)
+        all_imgs = re.findall(r'<img[^>]+src="([^">]+)"', desc)
+        
+        return {
+            "title": item.find('title').text,
+            "link": item.find('link').text,
+            "content": desc,
+            "imgs": all_imgs[:5] # 최대 5개만 추출
+        }
     except: return None
 
 def write_post_gallery(access_token, post_data):
     """
-    [422 에러 최종 해결 전략]
-    1. 제목 중복 방지: 제목 뒤에 현재 시각 추가 (카페24 중복 체크 우회)
-    2. 필드명 정밀화: 관리자 포스팅이므로 'writer' 필드에 ID 'pp1125' 사용
-    3. 첨부파일 강제화: 매뉴얼 규정대로 attachments 배열 필수 포함
+    [최종 규격 반영]
+    1. 최대 5개 이미지 추출 및 Base64 인코딩
+    2. 매뉴얼 명시 필드: file_count, writer_name, password 추가
+    3. UI 간섭 방지: 순수 POST 요청으로 '새 글 작성' 강제
     """
-    print("📡 [게시판] 갤러리 규격 전송 시작...")
+    print(f"📡 게시판 전송 (최대 5개 이미지 추출 및 {len(post_data['imgs'])}개 처리)...")
     board_no = 8
     url = f"https://{MALL_ID}.cafe24api.com/api/v2/admin/boards/{board_no}/articles"
     
-    # 이미지 파일 데이터 생성
+    # 1. attachments 배열 구성 (최대 5개)
     attachments = []
-    if post_data['img']:
+    for i, img_url in enumerate(post_data['imgs']):
         try:
-            img_res = requests.get(post_data['img'], headers={'User-Agent': 'Mozilla/5.0'})
+            img_res = requests.get(img_url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=10)
             img_base64 = base64.b64encode(img_res.content).decode('utf-8')
             attachments.append({
-                "filename": f"gallery_{datetime.now().strftime('%H%M%S')}.jpg",
+                "filename": f"gallery_img_{i+1}.jpg",
                 "file_data": img_base64
             })
-        except: pass
+        except: continue
 
     if not attachments:
-        print("❌ 이미지가 없어 갤러리 게시판 등록이 불가능합니다.")
+        print("❌ 첨부할 이미지가 없어 전송이 불가능합니다.")
         return
 
     headers = {
@@ -76,30 +83,32 @@ def write_post_gallery(access_token, post_data):
         "X-Cafe24-Api-Version": API_VERSION
     }
 
-    # [매뉴얼 기반 최종 페이로드]
+    # 2. 페이로드 구성 (매뉴얼 정밀 반영)
     payload = {
         "shop_no": 1,
         "request": {
-            # 중복 포스팅 방지를 위해 제목에 시각 추가
             "title": f"{post_data['title']} ({datetime.now().strftime('%H:%M:%S')})",
-            "content": post_data['content'] + f'<br><br><a href="{post_data["link"]}">원문보기</a>',
-            "writer": "pp1125", # 관리자 ID 직접 사용
+            "content": post_data['content'],
+            "writer_name": "pp1125",
+            "password": "Wkmg12345678!",
             "is_notice": "F",
             "is_secret": "F",
-            "attachments": attachments
+            "attachments": attachments,
+            "file_count": len(attachments) # 매뉴얼 명시 필드 추가
         }
     }
     
     response = requests.post(url, headers=headers, json=payload)
     print(f"📤 결과 코드: {response.status_code}")
     if response.status_code == 201:
-        print(f"🎉 성공! 게시판을 확인하세요.")
+        print(f"🎉 성공! {len(attachments)}개의 이미지가 포함된 새 글이 작성되었습니다.")
     else:
         print(f"❌ 실패 상세: {response.text}")
 
 if __name__ == "__main__":
     token = get_access_token()
     if token:
+        # 네이버 블로그: mediheally_lab
         post = get_latest_rss("https://rss.blog.naver.com/mediheally_lab.xml")
         if post:
             write_post_gallery(token, post)
