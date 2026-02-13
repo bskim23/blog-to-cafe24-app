@@ -3,7 +3,7 @@ name: Blog to Cafe24 Auto Post
 on:
   push:
     branches: [ main, master ]
-  workflow_dispatch: # 수동 실행 버튼
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -12,22 +12,21 @@ jobs:
   update-token-and-post:
     runs-on: ubuntu-latest
     steps:
-      # 1. 코드 가져오기
       - name: Checkout code
         uses: actions/checkout@v3
 
-      # 2. 파이썬 환경 설정
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.9'
 
-      # 3. 라이브러리 설치
       - name: Install dependencies
         run: pip install requests
 
-      # 4. [핵심 1] 파이썬 실행 (새 토큰을 발급받아 환경변수로 내보냄)
+      # 1. 파이썬 실행 (토큰 갱신 -> 글쓰기 시도)
+      # 글쓰기가 실패해도 토큰은 이미 파일에 기록된 상태로 종료됩니다.
       - name: Run script
+        id: run_script
         env:
           CAFE24_MALL_ID: ${{ secrets.CAFE24_MALL_ID }}
           CAFE24_CLIENT_ID: ${{ secrets.CAFE24_CLIENT_ID }}
@@ -35,12 +34,18 @@ jobs:
           CAFE24_REFRESH_TOKEN: ${{ secrets.CAFE24_REFRESH_TOKEN }}
         run: python main.py
 
-      # 5. [핵심 2] 깃허브 Secrets 자동 교체 (무한동력 완성)
+      # 2. [★핵심] 토큰 자동 저장 (무조건 실행)
+      # if: always() -> 앞 단계(글쓰기)가 실패해도 이 단계는 무조건 실행됩니다!
       - name: Update Refresh Token Secret
-        if: env.NEW_REFRESH_TOKEN != '' # 파이썬이 새 토큰을 줬을 때만 실행
+        if: always() 
         env:
-          GH_TOKEN: ${{ secrets.PA_TOKEN }} # 로봇에게 준 금고 열쇠
+          GH_TOKEN: ${{ secrets.PA_TOKEN }}
         run: |
-          echo "🔄 깃허브 Secrets 자동 갱신 중..."
-          gh secret set CAFE24_REFRESH_TOKEN --body "${{ env.NEW_REFRESH_TOKEN }}"
-          echo "✅ 갱신 완료! 다음 실행도 문제 없습니다."
+          # 새 토큰이 발급되었다면(파일에 기록되었다면) 즉시 금고에 저장
+          if [ -n "$NEW_REFRESH_TOKEN" ]; then
+            echo "🔄 생존 신고: 새 토큰을 안전하게 저장합니다..."
+            gh secret set CAFE24_REFRESH_TOKEN --body "$NEW_REFRESH_TOKEN"
+            echo "✅ 저장 완료! (글쓰기 실패 여부와 상관없이 토큰은 살렸습니다)"
+          else
+            echo "⚠️ 새 토큰이 발견되지 않았습니다. (토큰 갱신 단계에서 실패했을 수 있음)"
+          fi
