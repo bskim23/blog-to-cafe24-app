@@ -9,45 +9,41 @@ MALL_ID = "pp1125"
 NAVER_BLOG_ID = "mediheally_lab"
 
 def get_access_token():
-    try:
-        url = f"https://{MALL_ID}.cafe24api.com/api/v2/oauth/token"
-        auth = base64.b64encode(f"{CLIENT_ID}:{CLIENT_SECRET}".encode()).decode()
-        data = {"grant_type": "refresh_token", "refresh_token": REFRESH_TOKEN}
-        headers = {"Authorization": f"Basic {auth}", "Content-Type": "application/x-www-form-urlencoded"}
-        res = requests.post(url, headers=headers, data=data).json()
-        return res.get('access_token')
-    except Exception as e:
-        print(f"토큰 갱신 중 오류: {e}")
-        return None
+    url = f"https://{MALL_ID}.cafe24api.com/api/v2/oauth/token"
+    auth = base64.b64encode(f"{CLIENT_ID}:{CLIENT_SECRET}".encode()).decode()
+    data = {"grant_type": "refresh_token", "refresh_token": REFRESH_TOKEN}
+    headers = {"Authorization": f"Basic {auth}", "Content-Type": "application/x-www-form-urlencoded"}
+    res = requests.post(url, headers=headers, data=data).json()
+    return res.get('access_token')
 
 def get_latest_naver_post():
-    try:
-        # RSS 방식은 별도의 파싱 라이브러리 없이도 가장 안정적입니다.
-        rss_url = f"https://rss.blog.naver.com/{NAVER_BLOG_ID}.xml"
-        res = requests.get(rss_url)
-        # XML 파서 오류를 방지하기 위해 html.parser 대신 lxml 혹은 기본 파서 사용
-        soup = BeautifulSoup(res.content, 'html.parser') 
-        item = soup.find('item')
-        if item:
-            # RSS 내 description은 이미 HTML 형태입니다.
-            return {
-                "title": item.find('title').text,
-                "description": item.find('description').text
-            }
-    except Exception as e:
-        print(f"네이버 블로그 로드 중 오류: {e}")
+    rss_url = f"https://rss.blog.naver.com/{NAVER_BLOG_ID}.xml"
+    res = requests.get(rss_url)
+    soup = BeautifulSoup(res.content, 'xml') # XML 파서 사용
+    item = soup.find('item')
+    
+    if item:
+        post_link = item.find('link').text
+        post_title = item.find('title').text
+        # 로그에 정확한 타겟 URL 출력
+        print(f"\n🔎 [분석 중] 네이버 최신글 발견!")
+        print(f"📌 제목: {post_title}")
+        print(f"🔗 주소: {post_link}\n")
+        
+        return {
+            "title": post_title,
+            "description": item.find('description').text,
+            "link": post_link
+        }
     return None
 
 def run_strategy_b():
     token = get_access_token()
     post = get_latest_naver_post()
     
-    if not token:
-        return print("❌ Access Token을 가져오지 못했습니다. Secrets를 확인하세요.")
-    if not post:
-        return print("❌ 네이버 블로그 글을 가져오지 못했습니다.")
+    if not token or not post:
+        return print("❌ 데이터 로드 실패 (토큰 또는 블로그 확인 필요)")
 
-    # 카페24 포스팅 API (게시판 8번)
     url = f"https://{MALL_ID}.cafe24api.com/api/v2/admin/boards/8/articles"
     headers = {
         "Authorization": f"Bearer {token}",
@@ -55,19 +51,22 @@ def run_strategy_b():
         "X-Cafe24-Api-Version": "2023-03-01"
     }
     
+    # 레이아웃 최적화
+    content_html = f"<div style='font-family:sans-serif; line-height:1.8;'>{post['description']}</div>"
+    
     payload = {
         "request": {
             "title": post['title'],
-            "content": post['description'],
+            "content": content_html,
             "author": "메디힐리"
         }
     }
     
     res = requests.post(url, json=payload, headers=headers)
     if res.status_code == 201:
-        print(f"✅ 성공: [{post['title']}] 업로드 완료!")
+        print(f"✅ [성공] 느낌연구소(8번)에 포스팅 완료!")
     else:
-        print(f"❌ 포스팅 실패: {res.text}")
+        print(f"❌ [실패] 에러 내용: {res.json()}")
 
 if __name__ == "__main__":
     run_strategy_b()
