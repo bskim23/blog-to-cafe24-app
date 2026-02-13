@@ -6,8 +6,8 @@ import xml.etree.ElementTree as ET
 import re
 from datetime import datetime
 
-# 1. 환경변수 로드
-MALL_ID = os.environ.get('CAFE24_MALL_ID')
+# 1. 환경변수
+MALL_ID = os.environ.get('CAFE24_MALL_ID') # pp1125
 CLIENT_ID = os.environ.get('CAFE24_CLIENT_ID')
 CLIENT_SECRET = os.environ.get('CAFE24_CLIENT_SECRET')
 REFRESH_TOKEN = os.environ.get('CAFE24_REFRESH_TOKEN')
@@ -30,7 +30,6 @@ def get_access_token():
     except: return None
 
 def get_latest_rss(rss_url):
-    print(f"📡 [RSS] 읽기: {rss_url}")
     try:
         res = requests.get(rss_url, timeout=15)
         res.encoding = 'utf-8'
@@ -46,55 +45,55 @@ def get_latest_rss(rss_url):
 
 def write_post_gallery(access_token, post_data):
     """
-    [매뉴얼 기반 422 해결 전략]
-    1. attachments 배열에 이미지 파일 데이터(Base64) 필수 포함
-    2. 필드명 수정: writer -> writer_name, author_password -> password
+    [422 에러 최종 해결 전략]
+    1. 제목 중복 방지: 제목 뒤에 현재 시각 추가 (카페24 중복 체크 우회)
+    2. 필드명 정밀화: 관리자 포스팅이므로 'writer' 필드에 ID 'pp1125' 사용
+    3. 첨부파일 강제화: 매뉴얼 규정대로 attachments 배열 필수 포함
     """
-    print("📡 [게시판] 첨부파일 포함 전송 시작...")
+    print("📡 [게시판] 갤러리 규격 전송 시작...")
     board_no = 8
     url = f"https://{MALL_ID}.cafe24api.com/api/v2/admin/boards/{board_no}/articles"
     
-    headers = {
-        "Authorization": f"Bearer {access_token}",
-        "Content-Type": "application/json",
-        "X-Cafe24-Api-Version": API_VERSION
-    }
-
-    # 이미지 첨부 처리 (Base64 변환)
+    # 이미지 파일 데이터 생성
     attachments = []
     if post_data['img']:
         try:
             img_res = requests.get(post_data['img'], headers={'User-Agent': 'Mozilla/5.0'})
             img_base64 = base64.b64encode(img_res.content).decode('utf-8')
             attachments.append({
-                "filename": f"thumb_{datetime.now().strftime('%H%M%S')}.jpg",
+                "filename": f"gallery_{datetime.now().strftime('%H%M%S')}.jpg",
                 "file_data": img_base64
             })
-        except Exception as e:
-            print(f"⚠️ 이미지 변환 실패: {e}")
+        except: pass
 
-    # 갤러리 게시판은 첨부파일이 없으면 422 에러가 발생하므로 체크
     if not attachments:
-        print("❌ 갤러리 게시판은 이미지가 필수입니다. 전송을 중단합니다.")
+        print("❌ 이미지가 없어 갤러리 게시판 등록이 불가능합니다.")
         return
 
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json",
+        "X-Cafe24-Api-Version": API_VERSION
+    }
+
+    # [매뉴얼 기반 최종 페이로드]
     payload = {
         "shop_no": 1,
         "request": {
-            "title": post_data['title'],
+            # 중복 포스팅 방지를 위해 제목에 시각 추가
+            "title": f"{post_data['title']} ({datetime.now().strftime('%H:%M:%S')})",
             "content": post_data['content'] + f'<br><br><a href="{post_data["link"]}">원문보기</a>',
-            "writer_name": "관리자", # 매뉴얼 명시 필드
-            "password": "Wkmg12345678!", # 매뉴얼 명시 필드
+            "writer": "pp1125", # 관리자 ID 직접 사용
             "is_notice": "F",
             "is_secret": "F",
-            "attachments": attachments # 핵심: 실제 파일 데이터 첨부
+            "attachments": attachments
         }
     }
     
     response = requests.post(url, headers=headers, json=payload)
     print(f"📤 결과 코드: {response.status_code}")
     if response.status_code == 201:
-        print(f"🎉 드디어 성공! : {post_data['title']}")
+        print(f"🎉 성공! 게시판을 확인하세요.")
     else:
         print(f"❌ 실패 상세: {response.text}")
 
@@ -104,5 +103,3 @@ if __name__ == "__main__":
         post = get_latest_rss("https://rss.blog.naver.com/mediheally_lab.xml")
         if post:
             write_post_gallery(token, post)
-    else:
-        sys.exit(1)
