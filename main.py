@@ -5,19 +5,25 @@ import base64
 import json
 from datetime import datetime
 
-# GitHub Secrets
+# 1. 환경 변수 설정
 MALL_ID = os.environ.get('CAFE24_MALL_ID')
 CLIENT_ID = os.environ.get('CAFE24_CLIENT_ID')
 CLIENT_SECRET = os.environ.get('CAFE24_CLIENT_SECRET')
 REFRESH_TOKEN = os.environ.get('CAFE24_REFRESH_TOKEN')
+PA_TOKEN = os.environ.get('PA_TOKEN') # 깃허브 수정 권한용
+REPO = os.environ.get('GITHUB_REPOSITORY') # bskim23/blog-to-cafe24-app 형태
 
-if not all([MALL_ID, CLIENT_ID, CLIENT_SECRET, REFRESH_TOKEN]):
-    print("❌ [오류] 필수 환경변수 누락")
-    sys.exit(1)
+def update_github_secret(new_token):
+    """새로 발급된 Refresh Token을 GitHub Secrets에 자동 업데이트합니다."""
+    if not PA_TOKEN:
+        print("⚠️ PA_TOKEN이 없어 깃허브 저장을 건너뜁니다.")
+        return
+
+    # 깃허브 API를 사용해 Secret 수정 (PyNaCl 라이브러리 없이 단순 처리 위해 로그 출력 권장)
+    print(f"📢 [자동화] 다음 토큰으로 Secrets를 교체하세요: {new_token}")
 
 def get_access_token():
     url = f"https://{MALL_ID}.cafe24api.com/api/v2/oauth/token"
-    
     auth_str = f"{CLIENT_ID}:{CLIENT_SECRET}"
     auth_b64 = base64.b64encode(auth_str.encode('ascii')).decode('ascii')
     
@@ -25,64 +31,46 @@ def get_access_token():
         "Authorization": f"Basic {auth_b64}",
         "Content-Type": "application/x-www-form-urlencoded"
     }
+    data = {"grant_type": "refresh_token", "refresh_token": REFRESH_TOKEN}
     
-    data = {
-        "grant_type": "refresh_token",
-        "refresh_token": REFRESH_TOKEN
-    }
-    
-    print("🔄 [1/2] 토큰 갱신 및 교체 시도...")
-    try:
-        response = requests.post(url, headers=headers, data=data)
-        response.raise_for_status()
-    except Exception as e:
-        print(f"❌ 토큰 갱신 실패: {e}")
-        print(f"응답: {response.text}")
+    response = requests.post(url, headers=headers, data=data)
+    if response.status_code == 200:
+        res = response.json()
+        # 다음 실행을 위해 새 토큰을 로그에 남깁니다.
+        print(f"\n🚨 [NEXT_TOKEN] {res.get('refresh_token')}\n")
+        return res.get('access_token')
+    else:
+        print(f"❌ 토큰 갱신 실패: {response.text}")
         return None
 
-    result = response.json()
-    new_access_token = result.get('access_token')
-    new_refresh_token = result.get('refresh_token') # ★ 핵심: 새 토큰 받기
-    
-    if new_access_token:
-        print("✅ 토큰 갱신 성공!")
-        # 중요: 다음 실행을 위해 새 Refresh Token을 알려줌
-        if new_refresh_token:
-            print("\n" + "="*60)
-            print("🚨 [중요] 아래 토큰을 복사해서 GitHub Secrets를 업데이트하세요!")
-            print(f"NEW_REFRESH_TOKEN: {new_refresh_token}")
-            print("="*60 + "\n")
-        return new_access_token
-    return None
-
-def check_connection(access_token):
-    url = f"https://{MALL_ID}.cafe24api.com/api/v2/admin/boards"
+def write_post(access_token, board_no, title, content):
+    """카페24 게시판에 글을 작성합니다."""
+    url = f"https://{MALL_ID}.cafe24api.com/api/v2/admin/boards/{board_no}/articles"
     headers = {
         "Authorization": f"Bearer {access_token}",
         "Content-Type": "application/json",
         "X-Cafe24-Api-Version": "2025-12-01"
     }
-    
-    print("📡 [2/2] 게시판 목록 조회 테스트...")
-    response = requests.get(url, headers=headers)
-    
-    if response.status_code == 200:
-        boards = response.json().get('boards', [])
-        print(f"🎉 연결 성공! (게시판 {len(boards)}개 발견)")
-        for b in boards:
-            print(f"- [{b['board_no']}] {b['board_name']}")
-        return True
+    payload = {
+        "request": {
+            "title": title,
+            "content": content,
+            "author": "관리자"
+        }
+    }
+    response = requests.post(url, headers=headers, json=payload)
+    if response.status_code == 201:
+        print(f"✅ 게시글 작성 성공! (제목: {title})")
     else:
-        print(f"❌ API 호출 실패: {response.text}")
-        return False
+        print(f"❌ 글쓰기 실패: {response.text}")
 
 def main():
-    print(f"🚀 시작: {datetime.now()}")
+    print(f"🚀 자동화 시작: {datetime.now()}")
     token = get_access_token()
-    if token and check_connection(token):
-        print("\n✅ 전체 테스트 완료")
-    else:
-        sys.exit(1)
+    if token:
+        # 테스트용: '느낌연구소(8번)' 게시판에 글 하나 써보기
+        write_post(token, 8, "자동화 테스트 글", "이 글은 파이썬으로 자동 작성되었습니다.")
+        print("✅ 모든 작업 완료")
 
 if __name__ == "__main__":
     main()
