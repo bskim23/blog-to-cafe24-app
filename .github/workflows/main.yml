@@ -2,9 +2,14 @@ name: Blog to Cafe24 Auto Post
 
 on:
   push:
-    branches: [ main ]
-  workflow_dispatch:  # <--- 이 한 줄이 'Run workflow' 버튼을 만드는 스위치입니다!
+    branches: [ main, master ] # main과 master 둘 다 대응
+  workflow_dispatch:          # 수동 실행 버튼 생성
 
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Hello World"
 
 import os
 import sys
