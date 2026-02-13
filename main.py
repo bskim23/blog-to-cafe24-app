@@ -6,14 +6,15 @@ import xml.etree.ElementTree as ET
 import re
 from datetime import datetime
 
-# 1. 환경변수
-MALL_ID = os.environ.get('CAFE24_MALL_ID') # pp1125
+# 1. 환경변수 로드
+MALL_ID = os.environ.get('CAFE24_MALL_ID')
 CLIENT_ID = os.environ.get('CAFE24_CLIENT_ID')
 CLIENT_SECRET = os.environ.get('CAFE24_CLIENT_SECRET')
 REFRESH_TOKEN = os.environ.get('CAFE24_REFRESH_TOKEN')
 API_VERSION = "2025-12-01"
 
 def get_access_token():
+    print("🔑 [단계 1/5] 인증 토큰 갱신 시도 중...")
     url = f"https://{MALL_ID}.cafe24api.com/api/v2/oauth/token"
     auth_str = f"{CLIENT_ID}:{CLIENT_SECRET}"
     auth_b64 = base64.b64encode(auth_str.encode('ascii')).decode('ascii')
@@ -21,94 +22,104 @@ def get_access_token():
     data = {"grant_type": "refresh_token", "refresh_token": REFRESH_TOKEN}
     try:
         res = requests.post(url, headers=headers, data=data)
-        result = res.json()
-        new_refresh = result.get('refresh_token')
-        if new_refresh and os.getenv('GITHUB_ENV'):
-            with open(os.getenv('GITHUB_ENV'), "a") as f:
-                f.write(f"NEW_REFRESH_TOKEN={new_refresh}\n")
-        return result.get('access_token')
-    except: return None
+        res.raise_for_status()
+        print("✅ 인증 성공")
+        return res.json().get('access_token')
+    except Exception as e:
+        print(f"❌ 인증 실패: {e}")
+        return None
 
-def get_latest_rss(rss_url):
-    print(f"📡 RSS 읽기: {rss_url}")
+def write_post_trace(access_token):
+    print("\n📡 [단계 2/5] 네이버 RSS 데이터 추출 시작...")
+    rss_url = "https://rss.blog.naver.com/mediheally_lab.xml"
     try:
-        res = requests.get(rss_url, timeout=15)
+        res = requests.get(rss_url, timeout=10)
         res.encoding = 'utf-8'
         root = ET.fromstring(res.text)
         item = root.find('.//item')
-        if item is None: return None
         
-        desc = item.find('description').text
-        # 본문에서 모든 이미지 주소 추출 (최대 5개 제한)
-        all_imgs = re.findall(r'<img[^>]+src="([^">]+)"', desc)
+        # [상세 로그: 제목]
+        title = item.find('title').text
+        print(f"📝 제목 확인: {title[:30]}...")
         
-        return {
-            "title": item.find('title').text,
-            "link": item.find('link').text,
-            "content": desc,
-            "imgs": all_imgs[:5] # 최대 5개만 추출
-        }
-    except: return None
-
-def write_post_gallery(access_token, post_data):
-    """
-    [최종 규격 반영]
-    1. 최대 5개 이미지 추출 및 Base64 인코딩
-    2. 매뉴얼 명시 필드: file_count, writer_name, password 추가
-    3. UI 간섭 방지: 순수 POST 요청으로 '새 글 작성' 강제
-    """
-    print(f"📡 게시판 전송 (최대 5개 이미지 추출 및 {len(post_data['imgs'])}개 처리)...")
-    board_no = 8
-    url = f"https://{MALL_ID}.cafe24api.com/api/v2/admin/boards/{board_no}/articles"
-    
-    # 1. attachments 배열 구성 (최대 5개)
-    attachments = []
-    for i, img_url in enumerate(post_data['imgs']):
-        try:
-            img_res = requests.get(img_url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=10)
-            img_base64 = base64.b64encode(img_res.content).decode('utf-8')
-            attachments.append({
-                "filename": f"gallery_img_{i+1}.jpg",
-                "file_data": img_base64
-            })
-        except: continue
-
-    if not attachments:
-        print("❌ 첨부할 이미지가 없어 전송이 불가능합니다.")
+        # [상세 로그: 내용]
+        content = item.find('description').text
+        print(f"📄 내용 추출 완료 (글자 수: {len(content)}자)")
+        
+        # [상세 로그: 이미지]
+        all_imgs = re.findall(r'<img[^>]+src="([^">]+)"', content)
+        target_imgs = all_imgs[:5]
+        print(f"🖼️ 발견된 이미지: {len(all_imgs)}개 (최대 5개 처리 예정)")
+        
+        link = item.find('link').text
+    except Exception as e:
+        print(f"❌ RSS 추출 실패: {e}")
         return
 
+    print("\n📸 [단계 3/5] 이미지 로드 및 변환 시작 (attachments)...")
+    attachments = []
+    for i, img_url in enumerate(target_imgs):
+        try:
+            print(f"   [{i+1}/{len(target_imgs)}] 이미지 다운로드 중: {img_url[:50]}...")
+            img_res = requests.get(img_url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=10)
+            if img_res.status_code == 200:
+                img_base64 = base64.b64encode(img_res.content).decode('utf-8')
+                attachments.append({
+                    "filename": f"attach_{i+1}_{datetime.now().strftime('%H%M%S')}.jpg",
+                    "file_data": img_base64
+                })
+                print(f"   ✅ {i+1}번 이미지 변환 완료 (크기: {len(img_base64)} bytes)")
+            else:
+                print(f"   ⚠️ {i+1}번 이미지 다운로드 실패 (상태 코드: {img_res.status_code})")
+        except Exception as e:
+            print(f"   ❌ {i+1}번 이미지 처리 오류: {e}")
+
+    print(f"\n🚀 [단계 4/5] 카페24 전송 페이로드 구성...")
+    board_no = 8
+    writer_name = "pp1125"
+    print(f"   - 게시판 번호: {board_no}")
+    print(f"   - 작성자명: {writer_name}")
+    print(f"   - 첨부 파일 수: {len(attachments)}개")
+    
+    # 중복 방지를 위해 제목에 초단위 시간 추가
+    unique_title = f"{title} ({datetime.now().strftime('%H:%M:%S')})"
+    
+    payload = {
+        "shop_no": 1,
+        "request": {
+            "title": unique_title,
+            "content": content + f'<br><br><a href="{link}">원문보기</a>',
+            "writer_name": writer_name,
+            "password": "Wkmg12345678!",
+            "is_notice": "F",
+            "is_secret": "F",
+            "is_display": "T",  # 매뉴얼 기반: 노출 여부 명시
+            "attachments": attachments,
+            "file_count": len(attachments)
+        }
+    }
+
+    print("\n📤 [단계 5/5] 최종 데이터 전송...")
+    url = f"https://{MALL_ID}.cafe24api.com/api/v2/admin/boards/{board_no}/articles"
     headers = {
         "Authorization": f"Bearer {access_token}",
         "Content-Type": "application/json",
         "X-Cafe24-Api-Version": API_VERSION
     }
-
-    # 2. 페이로드 구성 (매뉴얼 정밀 반영)
-    payload = {
-        "shop_no": 1,
-        "request": {
-            "title": f"{post_data['title']} ({datetime.now().strftime('%H:%M:%S')})",
-            "content": post_data['content'],
-            "writer_name": "pp1125",
-            "password": "Wkmg12345678!",
-            "is_notice": "F",
-            "is_secret": "F",
-            "attachments": attachments,
-            "file_count": len(attachments) # 매뉴얼 명시 필드 추가
-        }
-    }
     
-    response = requests.post(url, headers=headers, json=payload)
-    print(f"📤 결과 코드: {response.status_code}")
-    if response.status_code == 201:
-        print(f"🎉 성공! {len(attachments)}개의 이미지가 포함된 새 글이 작성되었습니다.")
-    else:
-        print(f"❌ 실패 상세: {response.text}")
+    try:
+        response = requests.post(url, headers=headers, json=payload)
+        print(f"📊 전송 결과 코드: {response.status_code}")
+        if response.status_code == 201:
+            print(f"🎉 [성공] 게시글이 정상적으로 등록되었습니다!")
+        else:
+            print(f"❌ [실패] 상세 메시지: {response.text}")
+    except Exception as e:
+        print(f"❌ 전송 중 시스템 오류 발생: {e}")
 
 if __name__ == "__main__":
     token = get_access_token()
     if token:
-        # 네이버 블로그: mediheally_lab
-        post = get_latest_rss("https://rss.blog.naver.com/mediheally_lab.xml")
-        if post:
-            write_post_gallery(token, post)
+        write_post_trace(token)
+    else:
+        sys.exit(1)
