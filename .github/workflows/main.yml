@@ -1,13 +1,14 @@
-name: Blog to Cafe24 Auto Post
+name: Naver Blog to Cafe24 Auto Post
 
 on:
-  push:
-    branches: [ main, master ]
-  workflow_dispatch:
+  schedule:
+    - cron: '0 0 * * *' # 매일 한국 시간 오전 9시 (필요시 조정)
+  workflow_dispatch: # 수동 실행 버튼 생성
 
 jobs:
-  update-token-and-post:
+  build:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
@@ -17,12 +18,13 @@ jobs:
         with:
           python-version: '3.9'
 
-     - name: Install dependencies
-  run: |
-    python -m pip install --upgrade pip
-    pip install requests beautifulsoup4 lxml
+      # ✅ [핵심] 여기서 bs4와 requests를 설치합니다.
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests beautifulsoup4
 
-      - name: Run script
+      - name: Run Python script
         env:
           CAFE24_MALL_ID: ${{ secrets.CAFE24_MALL_ID }}
           CAFE24_CLIENT_ID: ${{ secrets.CAFE24_CLIENT_ID }}
@@ -30,12 +32,7 @@ jobs:
           CAFE24_REFRESH_TOKEN: ${{ secrets.CAFE24_REFRESH_TOKEN }}
         run: python main.py
 
-      - name: Update Refresh Token Secret
-        if: always()
-        env:
-          GH_TOKEN: ${{ secrets.PA_TOKEN }}
-        run: |
-          if [ -n "$NEW_REFRESH_TOKEN" ]; then
-            gh secret set CAFE24_REFRESH_TOKEN --body "$NEW_REFRESH_TOKEN"
-            echo "✅ 토큰 갱신 완료"
-          fi
+      # 리프레시 토큰이 갱신되었을 경우 환경 변수에 반영
+      - name: Check for new Refresh Token
+        if: env.NEW_REFRESH_TOKEN != ''
+        run: echo "NEW_REFRESH_TOKEN updated."
