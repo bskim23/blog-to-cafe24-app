@@ -60,9 +60,9 @@ def get_latest_rss(rss_url):
         return None
 
 def upload_image_to_cafe24(access_token, image_url):
-    """네이버 이미지를 카페24 서버로 세탁 업로드"""
+    """네이버 이미지를 카페24 서버로 업로드 (썸네일 생성용)"""
     if not image_url: return None
-    print(f"📸 이미지 업로드 시도: {image_url[:50]}...")
+    print(f"📸 이미지 업로드 시도...")
     try:
         img_res = requests.get(image_url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=10)
         img_data = base64.b64encode(img_res.content).decode('utf-8')
@@ -122,23 +122,23 @@ def write_post(access_token, post_data, cafe_img_url):
     print(f"📡 카페24 전송 시작...")
     response = requests.post(url, headers=headers, json=payload)
     
-    # [진단 핵심] 성공/실패 여부와 상관없이 모든 응답을 로그에 남김
     print(f"📢 HTTP 상태 코드: {response.status_code}")
     if response.status_code == 201:
-        print("🎉 포스팅 성공!")
+        print(f"🎉 포스팅 성공: {post_data['title']}")
     else:
-        print(f"❌ 상세 에러 내용: {response.text}")
+        print(f"❌ 상세 에러: {response.text}")
 
 if __name__ == "__main__":
+    # 아이디 mediheally_lab 반영
+    RSS_URL = "https://rss.blog.naver.com/mediheally_lab.xml"
+    
     token = get_access_token()
     if token:
-        # pp1125 네이버 RSS 사용
-        post = get_latest_rss("https://rss.blog.naver.com/pp1125.xml")
+        post = get_latest_rss(RSS_URL)
         if post:
             cafe_img = upload_image_to_cafe24(token, post['img'])
             write_post(token, post, cafe_img)
         else:
-            print("⚠️ 최신 글 데이터 없음")
+            print("⚠️ 최신 글을 가져오지 못했습니다.")
     else:
-        print("❌ 인증 토큰 획득 실패")
         sys.exit(1)
