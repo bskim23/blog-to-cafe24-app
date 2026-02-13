@@ -13,7 +13,6 @@ CLIENT_SECRET = os.environ.get('CAFE24_CLIENT_SECRET')
 REFRESH_TOKEN = os.environ.get('CAFE24_REFRESH_TOKEN')
 
 def get_access_token():
-    """토큰 갱신 및 새 리프레시 토큰 GITHUB_ENV 저장"""
     url = f"https://{MALL_ID}.cafe24api.com/api/v2/oauth/token"
     auth_str = f"{CLIENT_ID}:{CLIENT_SECRET}"
     auth_b64 = base64.b64encode(auth_str.encode('ascii')).decode('ascii')
@@ -30,13 +29,10 @@ def get_access_token():
                 with open(env_file, "a") as f:
                     f.write(f"NEW_REFRESH_TOKEN={new_refresh}\n")
         return result.get('access_token')
-    except Exception as e:
-        print(f"❌ 토큰 갱신 실패: {e}")
+    except:
         return None
 
 def get_latest_rss(rss_url):
-    """RSS 피드에서 최신 글 1개 추출"""
-    print(f"📡 RSS 읽는 중: {rss_url}")
     try:
         response = requests.get(rss_url, timeout=10)
         response.encoding = 'utf-8'
@@ -49,41 +45,24 @@ def get_latest_rss(rss_url):
         desc = item.find('description').text
         img = re.findall(r'<img[^>]+src="([^">]+)"', desc)
         
-        return {
-            "title": title, 
-            "link": link, 
-            "content": desc, 
-            "img": img[0] if img else None
-        }
-    except Exception as e:
-        print(f"❌ RSS 오류: {e}")
+        return {"title": title, "link": link, "content": desc, "img": img[0] if img else None}
+    except:
         return None
 
 def upload_image_to_cafe24(access_token, image_url):
-    """네이버 이미지를 카페24 서버로 업로드 (썸네일 생성용)"""
     if not image_url: return None
-    print(f"📸 이미지 업로드 시도...")
     try:
         img_res = requests.get(image_url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=10)
         img_data = base64.b64encode(img_res.content).decode('utf-8')
-        
         url = f"https://{MALL_ID}.cafe24api.com/api/v2/admin/images"
         headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
-        payload = {
-            "requests": [{
-                "image_data": img_data,
-                "filename": f"rss_{datetime.now().strftime('%H%M%S')}.jpg"
-            }]
-        }
+        payload = {"requests": [{"image_data": img_data, "filename": f"img_{datetime.now().strftime('%H%M%S')}.jpg"}]}
         res = requests.post(url, headers=headers, json=payload)
-        if res.status_code == 201:
-            return res.json()['images'][0]['url']
-        return None
+        return res.json()['images'][0]['url'] if res.status_code == 201 else None
     except:
         return None
 
 def write_post(access_token, post_data, cafe_img_url):
-    """갤러리 게시판 포스팅 및 결과 출력"""
     board_no = 8
     url = f"https://{MALL_ID}.cafe24api.com/api/v2/admin/boards/{board_no}/articles"
     headers = {
@@ -92,53 +71,35 @@ def write_post(access_token, post_data, cafe_img_url):
         "X-Cafe24-Api-Version": "2025-12-01"
     }
     
-    display_img = cafe_img_url if cafe_img_url else "https://sample.cafe24.com/sample_image.jpg"
-    content_html = f"""
-    <div style="text-align:center;">
-        <img src="{display_img}" style="max-width:100%; border:1px solid #eee;">
-        <div style="text-align:left; margin-top:20px;">
-            {post_data['content']}
-            <br><br>
-            <a href="{post_data['link']}" target="_blank">👉 네이버 원문 보기</a>
-        </div>
-    </div>
-    """
+    # 본문 구성 (이미지가 없을 경우 대비)
+    img_tag = f'<img src="{cafe_img_url}" style="max-width:100%;"><br>' if cafe_img_url else ""
+    content_html = f'<div style="text-align:center;">{img_tag}<div style="text-align:left;">{post_data["content"]}</div></div>'
     
+    # [422 해결용 정제된 페이로드]
     payload = {
         "shop_no": 1,
         "request": {
-            "board_no": board_no,
             "title": post_data['title'],
             "content": content_html,
             "writer": "관리자",
-            "author_password": "wkmg_pass_1234",
+            "author_password": "password123!",
             "is_notice": "F",
-            "is_secret": "F",
-            "article_type": "A",
-            "use_image_hosting": "T"
+            "is_secret": "F"
         }
     }
     
-    print(f"📡 카페24 전송 시작...")
     response = requests.post(url, headers=headers, json=payload)
-    
-    print(f"📢 HTTP 상태 코드: {response.status_code}")
     if response.status_code == 201:
-        print(f"🎉 포스팅 성공: {post_data['title']}")
+        print(f"🎉 성공: {post_data['title']}")
     else:
-        print(f"❌ 상세 에러: {response.text}")
+        print(f"❌ 실패 코드 {response.status_code}: {response.text}")
 
 if __name__ == "__main__":
-    # 아이디 mediheally_lab 반영
-    RSS_URL = "https://rss.blog.naver.com/mediheally_lab.xml"
-    
     token = get_access_token()
     if token:
-        post = get_latest_rss(RSS_URL)
+        post = get_latest_rss("https://rss.blog.naver.com/mediheally_lab.xml")
         if post:
             cafe_img = upload_image_to_cafe24(token, post['img'])
             write_post(token, post, cafe_img)
-        else:
-            print("⚠️ 최신 글을 가져오지 못했습니다.")
     else:
         sys.exit(1)
