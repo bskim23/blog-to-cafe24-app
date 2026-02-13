@@ -1,29 +1,40 @@
-name: Daily Blog to Cafe24 (Strategy B)
+name: Blog to Cafe24 Auto Post
 
 on:
-  schedule:
-    - cron: '0 0 * * *' # 매일 자정 자동 실행
-  workflow_dispatch: # 수동 실행 버튼 활성화
+  push:
+    branches:
+      - main       # 대표님 저장소 브랜치 이름 (master라면 master로 수정)
+    paths:
+      - '_posts/**' # 새 글이 올라오는 폴더만 감지 (필요 시 수정)
+  workflow_dispatch: # 깃허브에서 수동으로 'Run workflow' 버튼 누를 수 있게 함
 
 jobs:
-  build:
+  deploy:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
+    # 1. 저장소 코드 가져오기
+    - name: Checkout code
+      uses: actions/checkout@v3
 
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.9'
+    # 2. 파이썬 환경 설정
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
 
-      - name: Install dependencies
-        # BeautifulSoup과 함께 XML 파싱을 돕는 lxml을 반드시 설치해야 합니다.
-        run: pip install requests beautifulsoup4 lxml
+    # 3. 필요한 라이브러리 설치
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install requests
 
-      - name: Run Auto Post
-        env:
-          CLIENT_ID: ${{ secrets.CLIENT_ID }}
-          CLIENT_SECRET: ${{ secrets.CLIENT_SECRET }}
-          REFRESH_TOKEN: ${{ secrets.REFRESH_TOKEN }}
-        run: python main.py
+    # 4. 파이썬 스크립트 실행 (여기가 핵심입니다!)
+    - name: Run python main.py
+      env: 
+        # 깃허브 Secrets에 저장된 열쇠들을 파이썬에게 전달하는 다리 역할
+        CAFE24_MALL_ID: ${{ secrets.CAFE24_MALL_ID }}
+        CAFE24_CLIENT_ID: ${{ secrets.CAFE24_CLIENT_ID }}
+        CAFE24_CLIENT_SECRET: ${{ secrets.CAFE24_CLIENT_SECRET }}
+        CAFE24_REFRESH_TOKEN: ${{ secrets.CAFE24_REFRESH_TOKEN }}
+      run: python main.py
