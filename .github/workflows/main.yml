@@ -2,9 +2,8 @@ name: Naver to Cafe24 Auto Post
 
 on:
   schedule:
-    # 6시간마다 실행 (0시, 6시, 12시, 18시 KST)
     - cron: '0 */6 * * *'
-  workflow_dispatch: # 수동 실행 버튼
+  workflow_dispatch:
 
 jobs:
   auto-post:
@@ -31,4 +30,4 @@ jobs:
           CAFE24_REFRESH_TOKEN: ${{ secrets.CAFE24_REFRESH_TOKEN }}
           PA_TOKEN: ${{ secrets.PA_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-        run: python main.py
+        run: python -u main.py  # ← -u 추가 (unbuffered)
