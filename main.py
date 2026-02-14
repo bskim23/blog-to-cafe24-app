@@ -5,6 +5,7 @@ import base64
 import xml.etree.ElementTree as ET
 from bs4 import BeautifulSoup
 from github import Github, Auth
+import json
 
 # ============================================================================
 # 🔍 디버그: import 완료 확인
@@ -25,6 +26,7 @@ GITHUB_REPO = os.environ.get('GITHUB_REPOSITORY')
 
 BOARD_NO = 8
 PASSWORD = "1234"
+WRITER_NAME = "메디힐리"  # ← 변경!
 RSS_URL = "https://rss.blog.naver.com/mediheally_lab.xml"
 
 # ============================================================================
@@ -39,6 +41,7 @@ print(f"   PA_TOKEN         : {'✅ 있음' if PA_TOKEN else '❌ None'}")
 print(f"   GITHUB_REPO      : {'✅ ' + GITHUB_REPO if GITHUB_REPO else '❌ None'}")
 print(f"   BOARD_NO         : {BOARD_NO}")
 print(f"   PASSWORD         : {PASSWORD}")
+print(f"   WRITER_NAME      : {WRITER_NAME}")
 print(f"   RSS_URL          : {RSS_URL}")
 print("=" * 70 + "\n")
 
@@ -70,9 +73,6 @@ def refresh_and_save_token():
         "refresh_token": REFRESH_TOKEN
     }
 
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    # Step 1: 토큰 발급
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     try:
         print(f"\n🔍 [STEP 1] POST 요청 전송 중...")
         res = requests.post(url, headers=headers, data=data, timeout=10)
@@ -100,9 +100,6 @@ def refresh_and_save_token():
         print(f"🔍 [DEBUG] Exception Type: {type(e).__name__}")
         sys.exit(1)
     
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    # Step 2: 즉시 GitHub Secrets 저장 (필수!)
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     print(f"\n🔍 [STEP 2] GitHub Secrets 즉시 저장 시작")
     print(f"   PA_TOKEN 존재: {'✅' if PA_TOKEN else '❌'}")
     print(f"   GITHUB_REPO: {GITHUB_REPO}")
@@ -114,7 +111,6 @@ def refresh_and_save_token():
         print("\n✅ Access Token만 사용하여 계속 진행\n")
         return access_token
     
-    # GitHub Secrets 업데이트 시도
     try:
         print(f"🔍 [DEBUG] PyGithub 인증 중...")
         auth = Auth.Token(PA_TOKEN)
@@ -141,7 +137,6 @@ def refresh_and_save_token():
         import traceback
         print(f"🔍 [DEBUG] Traceback:\n{traceback.format_exc()}")
         
-        # GitHub 저장 실패해도 Access Token은 있으니 계속 진행
         print(f"\n⚠️  Access Token은 발급되었으므로 이번 실행은 계속 진행합니다.")
         print(f"   하지만 다음 실행 전에 반드시 수동 업데이트 필요!\n")
     
@@ -185,14 +180,9 @@ def fetch_latest_post():
         print(f"   제목: {post_title}")
         print(f"   원본 링크: {post_link}")
         
-        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        # 🔧 수정: logNo만 추출 (쿼리 파라미터 제거)
-        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        # 예: https://blog.naver.com/mediheally_lab/224179364627?fromRss=true&trackingCode=rss
-        # → logNo = 224179364627 (숫자만)
-        
-        path_part = post_link.split('/')[-1]  # "224179364627?fromRss=true&trackingCode=rss"
-        log_no = path_part.split('?')[0]      # "224179364627" ← 쿼리 파라미터 제거!
+        # logNo만 추출 (쿼리 파라미터 제거)
+        path_part = post_link.split('/')[-1]
+        log_no = path_part.split('?')[0]
         
         print(f"🔍 [DEBUG] 추출된 logNo: {log_no}")
         
@@ -209,6 +199,7 @@ def fetch_latest_post():
         import traceback
         print(f"🔍 [DEBUG] Traceback:\n{traceback.format_exc()}")
         sys.exit(1)
+
 # ============================================================================
 # 3. 본문 및 이미지 추출
 # ============================================================================
@@ -252,7 +243,7 @@ def extract_content_and_images(real_url):
         print(f"🔍 [DEBUG] 총 {len(img_tags)}개 이미지 태그 발견")
         
         for idx, img in enumerate(img_tags):
-            if idx >= 5:  # 최대 5개
+            if idx >= 5:
                 print(f"🔍 [DEBUG] 최대 5개 제한으로 중단")
                 break
             
@@ -318,10 +309,22 @@ def upload_to_cafe24(access_token, title, content, original_link, attachments):
         print("❌ [ERROR] 갤러리 게시판은 최소 1개의 이미지가 필요합니다.")
         sys.exit(1)
     
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # 🔍 디버깅: 각 이미지 파일 크기 확인
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    print(f"\n🔍 [DEBUG] 이미지 상세 정보:")
+    for idx, att in enumerate(attachments):
+        print(f"   이미지 {idx+1}:")
+        print(f"      filename: {att['filename']}")
+        print(f"      Base64 길이: {len(att['file_data']):,} chars")
+        # Base64 → 원본 크기 추정 (Base64는 약 1.33배 커짐)
+        original_size = len(att['file_data']) * 3 / 4
+        print(f"      추정 원본 크기: {original_size:,.0f} bytes ({original_size/1024/1024:.2f} MB)")
+    
     # 본문 구성 (원문 링크 추가)
     final_content = f"{content}\n\n<br><br><a href='{original_link}' target='_blank'>📝 원문 보러가기</a>"
     
-    print(f"🔍 [DEBUG] 최종 본문 길이: {len(final_content):,}자")
+    print(f"\n🔍 [DEBUG] 최종 본문 길이: {len(final_content):,}자")
     
     payload = {
         "shop_no": 1,
@@ -329,7 +332,7 @@ def upload_to_cafe24(access_token, title, content, original_link, attachments):
             "board_no": BOARD_NO,
             "title": title,
             "content": final_content,
-            "writer": "관리자",
+            "writer": WRITER_NAME,  # ← "메디힐리"
             "password": PASSWORD,
             "is_notice": "F",
             "is_secret": "F",
@@ -337,12 +340,41 @@ def upload_to_cafe24(access_token, title, content, original_link, attachments):
         }
     }
     
-    print(f"🔍 [DEBUG] Payload 구성 완료:")
+    print(f"\n🔍 [DEBUG] Payload 구성 완료:")
     print(f"   shop_no: 1")
     print(f"   board_no: {BOARD_NO}")
     print(f"   title: {title}")
-    print(f"   writer: 관리자")
+    print(f"   content 길이: {len(final_content)} chars")
+    print(f"   writer: {WRITER_NAME}")  # ← "메디힐리"
+    print(f"   password: {PASSWORD}")
+    print(f"   is_notice: F")
+    print(f"   is_secret: F")
     print(f"   attachments: {len(attachments)}개")
+    
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # 🔍 디버깅: Payload 샘플 출력 (Base64 제외)
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    debug_payload = {
+        "shop_no": 1,
+        "request": {
+            "board_no": BOARD_NO,
+            "title": title,
+            "content": final_content[:100] + "...",
+            "writer": WRITER_NAME,
+            "password": PASSWORD,
+            "is_notice": "F",
+            "is_secret": "F",
+            "attachments": [
+                {
+                    "filename": att["filename"],
+                    "file_data": f"<Base64 {len(att['file_data'])} chars>"
+                }
+                for att in attachments
+            ]
+        }
+    }
+    print(f"\n🔍 [DEBUG] Payload 구조 (Base64 생략):")
+    print(json.dumps(debug_payload, indent=2, ensure_ascii=False))
     
     url = f"https://{MALL_ID}.cafe24api.com/api/v2/admin/boards/{BOARD_NO}/articles"
     headers = {
@@ -351,26 +383,54 @@ def upload_to_cafe24(access_token, title, content, original_link, attachments):
     }
     
     print(f"\n🔍 [DEBUG] API URL: {url}")
-    print(f"🔍 [DEBUG] POST 요청 전송 중...")
+    print(f"🔍 [DEBUG] Headers:")
+    print(f"   Authorization: Bearer {access_token[:20]}...")
+    print(f"   Content-Type: application/json")
+    print(f"\n🔍 [DEBUG] POST 요청 전송 중...")
     
     try:
         res = requests.post(url, headers=headers, json=payload, timeout=30)
         
-        print(f"🔍 [DEBUG] 응답 상태 코드: {res.status_code}")
-        print(f"🔍 [DEBUG] 응답 내용: {res.text[:500]}...")
+        print(f"\n🔍 [DEBUG] 응답 상태 코드: {res.status_code}")
+        print(f"🔍 [DEBUG] 응답 헤더:")
+        for key, value in res.headers.items():
+            print(f"   {key}: {value}")
+        print(f"\n🔍 [DEBUG] 응답 전체 내용:")
+        print(res.text)
         
         if res.status_code == 201:
             print("\n" + "=" * 70)
             print("🎉 게시글 업로드 성공!")
             print("=" * 70)
             print(f"   📝 제목: {title}")
+            print(f"   ✍️  작성자: {WRITER_NAME}")
             print(f"   🖼️  이미지: {len(attachments)}개")
             print(f"   🔗 확인: https://{MALL_ID}.cafe24.com/board/gallery/{BOARD_NO}/")
             print("=" * 70)
             print(f"✅ [4/4] 업로드 완료\n")
         else:
-            print(f"❌ [ERROR] 업로드 실패 (HTTP {res.status_code})")
-            print(f"   응답 내용: {res.text}")
+            print(f"\n❌ [ERROR] 업로드 실패 (HTTP {res.status_code})")
+            print(f"   응답 전체 내용:")
+            
+            # JSON 파싱 시도
+            try:
+                error_json = res.json()
+                print(json.dumps(error_json, indent=2, ensure_ascii=False))
+            except:
+                print(res.text)
+            
+            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            # 422 에러일 경우 추가 안내
+            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            if res.status_code == 422:
+                print(f"\n⚠️  [422 에러 가능한 원인]")
+                print(f"   1. 필수 필드 누락 또는 형식 오류")
+                print(f"   2. 이미지 크기 제한 초과 (각 파일 또는 전체 용량)")
+                print(f"   3. writer 필드 값이 게시판 설정과 불일치")
+                print(f"   4. attachments 배열 형식 오류")
+                print(f"   5. 게시판 권한 문제")
+                print(f"\n   위 Payload 구조를 확인하세요.")
+            
             sys.exit(1)
             
     except Exception as e:
@@ -404,17 +464,11 @@ def main():
     print("✅ 모든 필수 환경변수 확인 완료\n")
     
     try:
-        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        # [최우선] 토큰 갱신 및 저장 - 이게 성공해야 다음 단계 진행
-        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # [최우선] 토큰 갱신 및 저장
         print("🔍 [DEBUG] [최우선 작업] 토큰 갱신 및 저장 호출")
         access_token = refresh_and_save_token()
         
         print("✅ 토큰 안전하게 확보됨 - 이제 나머지 작업 진행\n")
-        
-        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        # 나머지 작업 (여기서 에러 나도 토큰은 이미 안전하게 저장됨)
-        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         
         # 2. 최신 글 가져오기
         print("🔍 [DEBUG] Step 2: 최신 글 가져오기 호출")
