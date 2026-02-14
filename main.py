@@ -249,12 +249,12 @@ def extract_content_and_images(real_url):
         sys.exit(1)
 
 # ============================================================================
-# 4. 이미지를 카페24 Products API로 업로드 (requests 배열 구조)
+# 4. 이미지를 카페24 Products API로 업로드 (path 필드 인식)
 # ============================================================================
 def upload_image_to_cafe24(access_token, image_data):
     """
     카페24 Products Images API로 이미지 업로드 → 이미지 URL 받기
-    핵심: requests (복수형) 배열 구조 사용!
+    핵심: images[0].path 필드에서 URL 추출!
     """
     url = f"https://{MALL_ID}.cafe24api.com/api/v2/admin/products/images"
     
@@ -264,7 +264,6 @@ def upload_image_to_cafe24(access_token, image_data):
         "X-Cafe24-Api-Version": "2025-12-01"
     }
     
-    # ✅ 핵심: requests (복수형) 배열!
     payload = {
         "requests": [
             {
@@ -286,23 +285,31 @@ def upload_image_to_cafe24(access_token, image_data):
         if res.status_code in [200, 201]:
             result = res.json()
             
-            # 이미지 URL 추출
+            # ✅ 이미지 URL 추출 (여러 패턴 시도)
             image_url = None
             
-            # 응답 구조 탐색
-            if 'image' in result:
+            # 패턴 1: images[].path (실제 응답 구조!)
+            if 'images' in result and len(result['images']) > 0:
+                img_obj = result['images'][0]
+                image_url = img_obj.get('path') or img_obj.get('url') or img_obj.get('image_url')
+            
+            # 패턴 2: image.path
+            elif 'image' in result:
                 if isinstance(result['image'], dict):
-                    image_url = result['image'].get('url') or result['image'].get('image_url')
+                    image_url = result['image'].get('path') or result['image'].get('url') or result['image'].get('image_url')
                 elif isinstance(result['image'], str):
                     image_url = result['image']
-            elif 'images' in result and len(result['images']) > 0:
-                img_obj = result['images'][0]
-                image_url = img_obj.get('url') or img_obj.get('image_url')
+            
+            # 패턴 3: 직접 path
+            elif 'path' in result:
+                image_url = result['path']
+            
+            # 패턴 4: 직접 url
             elif 'url' in result:
                 image_url = result['url']
             
             if image_url:
-                print(f"      ✅ 이미지 URL: {image_url[:70]}...", flush=True)
+                print(f"      ✅ 이미지 URL: {image_url}", flush=True)
                 sys.stdout.flush()
                 return image_url
             else:
@@ -421,7 +428,7 @@ def upload_to_cafe24(access_token, title, content, original_link, images):
 # ============================================================================
 def main():
     print("\n" + "=" * 70, flush=True)
-    print("🚀 네이버 → 카페24 자동 포스팅 (requests 배열 구조)", flush=True)
+    print("🚀 네이버 → 카페24 자동 포스팅 (path 필드 인식)", flush=True)
     print("=" * 70 + "\n", flush=True)
     sys.stdout.flush()
     
