@@ -31,4 +31,4 @@ jobs:
           CAFE24_REFRESH_TOKEN: ${{ secrets.CAFE24_REFRESH_TOKEN }}
           PA_TOKEN: ${{ secrets.PA_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-        run: python -u test_main.py
+        run: python -u main.py
