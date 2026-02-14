@@ -219,35 +219,135 @@ def pick_best_img_url(img_tag):
     return force_large_naver_image(candidates[0], target_w=2000)
 
 # ============================================================================
-# 본문 블록 추출 (text/image 섞인 순서 유지)
+# 텍스트/중복 처리 + 헤딩 승격
 # ============================================================================
 def clean_text_block(text: str) -> str:
+    text = re.sub(r"\r\n?", "\n", text)
     text = re.sub(r"\n{3,}", "\n\n", text.strip())
     return text
 
+def normalize_text_for_dedupe(text: str) -> str:
+    t = text.strip()
+    t = re.sub(r"\r\n?", "\n", t)
+    t = re.sub(r"[ \t]+", " ", t)
+    t = re.sub(r"\n{2,}", "\n", t)
+    return t
+
+def dedupe_key(text: str) -> str:
+    t = normalize_text_for_dedupe(text)
+    if len(t) > 400:
+        t = t[:400]
+    return t
+
+def should_promote_to_heading(text: str) -> bool:
+    t = text.strip()
+    if "\n" in t:
+        return False
+    if 3 <= len(t) <= 28 and t.endswith(":"):
+        return True
+    if re.match(r"^(STEP|Step)\s*\d+", t):
+        return True
+    if re.match(r"^[✅✔■]\s*", t):
+        return True
+    return False
+
+def render_text_block(text: str, tag: str) -> str:
+    text = clean_text_block(text)
+    esc = html.escape(text).replace("\n", "<br>\n")
+
+    # 네이버에서 헤더로 잡힌 건 카페24에서도 헤더로
+    if tag in ("h1", "h2"):
+        return f"<h2>{esc}</h2>"
+    if tag == "h3":
+        return f"<h3>{esc}</h3>"
+
+    # DOM이 p여도 패턴이면 소제목으로 승격
+    if tag == "p" and should_promote_to_heading(text):
+        return f"<h3>{esc}</h3>"
+
+    # 리스트는 최소한의 불릿
+    if tag == "li":
+        return f"<p>• {esc}</p>"
+
+    return f"<p>{esc}</p>"
+
 def iter_blocks_from_content_area(content_area):
-    for node in content_area.find_all(['p', 'div', 'figure', 'h1', 'h2', 'h3', 'img'], recursive=True):
+    """
+    ✅ 중복 방지 핵심:
+    - div/figure 래퍼는 텍스트 추출 대상에서 제외
+    - 의미 있는 태그(p/h1~h3/li/img)만 탐색
+    - 동일 텍스트는 seen으로 제거
+    """
+    nodes = content_area.find_all(['h1', 'h2', 'h3', 'p', 'li', 'img'], recursive=True)
+
+    seen = set()
+
+    for node in nodes:
         if node.name == 'img':
             yield {"type": "image", "img_tag": node}
             continue
 
-        tmp = BeautifulSoup(str(node), 'html.parser')
-        for im in tmp.find_all('img'):
-            im.decompose()
-        txt = tmp.get_text(separator="\n", strip=True)
+        txt = node.get_text(separator="\n", strip=True)
         txt = clean_text_block(txt)
-        if txt:
-            yield {"type": "text", "text": txt}
+        if not txt:
+            continue
 
-def text_to_html(text: str) -> str:
-    text = clean_text_block(text)
-    parts = re.split(r"\n\s*\n+", text.strip())
-    out = []
-    for p in parts:
-        p = html.escape(p).replace("\n", "<br>\n")
-        out.append(f"<p>{p}</p>")
-    return "\n".join(out)
+        key = dedupe_key(txt)
+        if key in seen:
+            continue
+        seen.add(key)
 
+        yield {"type": "text", "text": txt, "tag": node.name}
+
+def merge_text_blocks(blocks, max_chars=900):
+    """
+    연속 text 블록을 적당히 합쳐 문단 호흡 복원 (이미지 만나면 끊음)
+    """
+    merged = []
+    buffer = []
+    buffer_tag = None  # 병합 시 대표 tag (헤더는 병합하지 않도록)
+
+    def flush():
+        nonlocal buffer_tag
+        if not buffer:
+            return
+        merged.append({"type": "text", "text": "\n\n".join(buffer), "tag": buffer_tag or "p"})
+        buffer.clear()
+        buffer_tag = None
+
+    for b in blocks:
+        if b["type"] == "image":
+            flush()
+            merged.append(b)
+            continue
+
+        t = b["text"]
+        tag = b.get("tag", "p")
+
+        # 헤더는 단독 유지
+        if tag in ("h1", "h2", "h3"):
+            flush()
+            merged.append(b)
+            continue
+
+        if not buffer:
+            buffer.append(t)
+            buffer_tag = tag
+            continue
+
+        if sum(len(x) for x in buffer) + len(t) > max_chars:
+            flush()
+            buffer.append(t)
+            buffer_tag = tag
+        else:
+            buffer.append(t)
+
+    flush()
+    return merged
+
+# ============================================================================
+# 본문 블록 추출 (text/image 섞인 순서 유지)
+# ============================================================================
 def extract_blocks(real_url):
     """
     네이버 블로그 본문을 '블록(text/image) 순서'로 추출
@@ -274,11 +374,12 @@ def extract_blocks(real_url):
         print("✅ 본문 영역 발견", flush=True)
         sys.stdout.flush()
 
-        blocks = list(iter_blocks_from_content_area(content_area))[:200]
+        raw_blocks = list(iter_blocks_from_content_area(content_area))[:600]
+        blocks = merge_text_blocks(raw_blocks)
 
         t_cnt = sum(1 for b in blocks if b["type"] == "text")
         i_cnt = sum(1 for b in blocks if b["type"] == "image")
-        print(f"🔍 [DEBUG] 블록 수: text={t_cnt}, image={i_cnt}", flush=True)
+        print(f"🔍 [DEBUG] 블록 수(최종): text={t_cnt}, image={i_cnt}", flush=True)
         sys.stdout.flush()
 
         return blocks, nav_headers
@@ -300,8 +401,6 @@ def upload_image_to_cafe24(access_token, image_data):
     headers = {
         "Authorization": f"Bearer {access_token}",
         "Content-Type": "application/json",
-        # 미래 버전 헤더는 제거 권장 (필요시 유효 버전으로 교체)
-        # "X-Cafe24-Api-Version": "2023-12-01"
     }
 
     payload = {
@@ -317,7 +416,6 @@ def upload_image_to_cafe24(access_token, image_data):
 
     try:
         res = requests.post(url, headers=headers, json=payload, timeout=30)
-
         print(f"      🔍 업로드 응답 코드: {res.status_code}", flush=True)
         sys.stdout.flush()
 
@@ -352,7 +450,7 @@ def upload_image_to_cafe24(access_token, image_data):
         return None
 
 # ============================================================================
-# 5. 카페24 갤러리 게시판 업로드 (블록 순서 유지)
+# 5. 카페24 갤러리 게시판 업로드 (블록 순서 유지 + 헤딩 반영)
 # ============================================================================
 def upload_to_cafe24(access_token, title, blocks, original_link, nav_headers):
     print("📤 [4/5] 블록 순서대로 카페24 콘텐츠 구성 시작", flush=True)
@@ -361,57 +459,58 @@ def upload_to_cafe24(access_token, title, blocks, original_link, nav_headers):
 
     html_parts = []
     uploaded = 0
-    max_images = 12  # 필요 시 조정
+    max_images = 20  # 필요 시 조정
 
     for b in blocks:
         if b["type"] == "text":
-            html_parts.append(text_to_html(b["text"]))
-        else:
-            if uploaded >= max_images:
-                continue
+            html_parts.append(render_text_block(b["text"], b.get("tag", "p")))
+            continue
 
-            img_tag = b["img_tag"]
-            src = pick_best_img_url(img_tag)
-            if not src:
-                continue
+        # image
+        if uploaded >= max_images:
+            continue
 
-            # postfiles.pstatic.net만 고집하지 않고 pstatic/net 전체 허용
-            if not ("pstatic.net" in src or "naver.net" in src):
-                continue
+        img_tag = b["img_tag"]
+        src = pick_best_img_url(img_tag)
+        if not src:
+            continue
 
-            try:
-                img_res = requests.get(src, headers=nav_headers, timeout=15)
-                img_res.raise_for_status()
-                size = len(img_res.content)
+        if not ("pstatic.net" in src or "naver.net" in src):
+            continue
 
-                # 썸네일 의심: 재시도
-                if size < 30_000:
-                    src2 = force_large_naver_image(src, target_w=3000)
-                    if src2 != src:
-                        img_res2 = requests.get(src2, headers=nav_headers, timeout=15)
-                        if img_res2.ok and len(img_res2.content) > size:
-                            img_res = img_res2
-                            size = len(img_res.content)
+        try:
+            img_res = requests.get(src, headers=nav_headers, timeout=15)
+            img_res.raise_for_status()
+            size = len(img_res.content)
 
-                if size < 30_000:
-                    print(f"   ⚠️  썸네일로 의심(스킵): {size:,} bytes", flush=True)
-                    sys.stdout.flush()
-                    continue
+            # 썸네일 의심 시 재시도(더 큰 w)
+            if size < 30_000:
+                src2 = force_large_naver_image(src, target_w=3000)
+                if src2 != src:
+                    img_res2 = requests.get(src2, headers=nav_headers, timeout=15)
+                    if img_res2.ok and len(img_res2.content) > size:
+                        img_res = img_res2
+                        size = len(img_res.content)
 
-                b64_img = base64.b64encode(img_res.content).decode()
-                image_url = upload_image_to_cafe24(access_token, {"base64": b64_img})
-
-                if image_url:
-                    uploaded += 1
-                    html_parts.append(
-                        f'<p><img src="{image_url}" alt="이미지 {uploaded}" style="max-width:100%;height:auto;"></p>'
-                    )
-                    print(f"   ✅ 이미지 업로드/삽입 완료: {size:,} bytes", flush=True)
-                    sys.stdout.flush()
-
-            except Exception as e:
-                print(f"   ⚠️  이미지 처리 실패: {e}", flush=True)
+            if size < 30_000:
+                print(f"   ⚠️  썸네일로 의심(스킵): {size:,} bytes", flush=True)
                 sys.stdout.flush()
+                continue
+
+            b64_img = base64.b64encode(img_res.content).decode()
+            image_url = upload_image_to_cafe24(access_token, {"base64": b64_img})
+
+            if image_url:
+                uploaded += 1
+                html_parts.append(
+                    f'<p><img src="{image_url}" alt="이미지 {uploaded}" style="max-width:100%;height:auto;"></p>'
+                )
+                print(f"   ✅ 이미지 업로드/삽입 완료: {size:,} bytes", flush=True)
+                sys.stdout.flush()
+
+        except Exception as e:
+            print(f"   ⚠️  이미지 처리 실패: {e}", flush=True)
+            sys.stdout.flush()
 
     if uploaded == 0:
         print("❌ [ERROR] 갤러리 게시판은 이미지가 필수인데, 유효 이미지가 0개입니다.", flush=True)
@@ -429,8 +528,6 @@ def upload_to_cafe24(access_token, title, blocks, original_link, nav_headers):
     headers = {
         "Authorization": f"Bearer {access_token}",
         "Content-Type": "application/json",
-        # 필요 시 유효 버전으로 지정
-        # "X-Cafe24-Api-Version": "2023-12-01"
     }
 
     req = {
@@ -451,7 +548,7 @@ def upload_to_cafe24(access_token, title, blocks, original_link, nav_headers):
 
     if res.status_code == 201:
         print("\n" + "=" * 70, flush=True)
-        print("🎉 게시글 업로드 성공! (블록 순서 유지)", flush=True)
+        print("🎉 게시글 업로드 성공! (헤딩/크기 변화 반영)", flush=True)
         print("=" * 70, flush=True)
         print(f"   📝 제목: {title}", flush=True)
         print(f"   🖼️  삽입 이미지: {uploaded}개", flush=True)
@@ -470,7 +567,7 @@ def upload_to_cafe24(access_token, title, blocks, original_link, nav_headers):
 # ============================================================================
 def main():
     print("\n" + "=" * 70, flush=True)
-    print("🚀 네이버 → 카페24 자동 포스팅 (블록 순서 유지)", flush=True)
+    print("🚀 네이버 → 카페24 자동 포스팅 (블록/중복제거/헤딩 반영)", flush=True)
     print("=" * 70 + "\n", flush=True)
     sys.stdout.flush()
 
@@ -490,10 +587,10 @@ def main():
         # 2) 최신 글
         title, original_link, real_url = fetch_latest_post()
 
-        # 3) 본문 블록 추출(순서 유지)
+        # 3) 본문 블록 추출(순서 유지 + 중복 제거 + 병합)
         blocks, nav_headers = extract_blocks(real_url)
 
-        # 4~5) 블록 순서대로 이미지 업로드 & 게시글 생성
+        # 4~5) 블록 순서대로 이미지 업로드 & 게시글 생성(헤딩 반영)
         upload_to_cafe24(access_token, title, blocks, original_link, nav_headers)
 
         print("\n✅ 모든 작업 완료!\n", flush=True)
