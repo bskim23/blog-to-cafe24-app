@@ -252,36 +252,45 @@ def extract_content_and_images(real_url):
         sys.exit(1)
 
 # ============================================================================
-# 4. 카페24 업로드 (쿼리 스트링 제거, 헤더로 버전 지정)
+# 4. 카페24 업로드 (이미지 Base64 임베드)
 # ============================================================================
 def upload_to_cafe24(access_token, title, content, original_link, attachments):
     """
-    카페24 갤러리 게시판에 업로드 (쿼리 스트링 제거, 헤더로 버전 지정)
+    카페24 갤러리 게시판에 업로드 (이미지를 content에 Base64 임베드)
     """
     print("📤 [4/4] 카페24 갤러리 게시판 업로드 시작", flush=True)
     print("-" * 70, flush=True)
     sys.stdout.flush()
     
-    final_content = f"{content}\n\n<br><br><a href='{original_link}' target='_blank'>📝 원문 보러가기 (이미지 포함)</a>"
+    if not attachments:
+        print("❌ [ERROR] 갤러리 게시판은 이미지가 필수입니다.", flush=True)
+        sys.exit(1)
     
-    # ✅ 수정: 쿼리 스트링 제거
+    # ✅ 이미지를 content에 직접 임베드
+    image_html = ""
+    for idx, att in enumerate(attachments, 1):
+        image_html += f'<img src="data:image/jpeg;base64,{att["file_data"]}" alt="이미지 {idx}" style="max-width:100%;"><br>\n'
+    
+    final_content = f"{image_html}<br>{content}<br><br><a href='{original_link}' target='_blank'>📝 원문 보러가기</a>"
+    
+    print(f"🔍 [DEBUG] 이미지 {len(attachments)}개를 content에 직접 임베드", flush=True)
+    sys.stdout.flush()
+    
     url = f"https://{MALL_ID}.cafe24api.com/api/v2/admin/boards/{BOARD_NO}/articles"
     
-    # ✅ 수정: 버전을 헤더로 이동
     headers = {
         "Authorization": f"Bearer {access_token}",
         "Content-Type": "application/json",
         "X-Cafe24-Api-Version": "2025-12-01"
     }
     
-    # ✅ GPT 조언: 필수 필드 모두 포함, 올바른 필드명 사용
     payload = {
         "shop_no": 1,
         "request": {
-            "writer": WRITER_NAME,        # Required!
-            "title": title,               # Required!
-            "content": final_content,     # Required!
-            "client_ip": "127.0.0.1",     # Required!
+            "writer": WRITER_NAME,
+            "title": title,
+            "content": final_content,  # 이미지 포함된 content
+            "client_ip": "127.0.0.1",
             "password": PASSWORD,
             "notice": "F",
             "fixed": "F",
@@ -289,10 +298,8 @@ def upload_to_cafe24(access_token, title, content, original_link, attachments):
         }
     }
     
-    print(f"🔍 [DEBUG] 필수 필드로 시도 (이미지 없음)", flush=True)
+    print(f"🔍 [DEBUG] Content 길이: {len(final_content):,} 문자", flush=True)
     print(f"🔍 [DEBUG] URL: {url}", flush=True)
-    print(f"🔍 [DEBUG] Payload 미리보기:", flush=True)
-    print(f"{json.dumps(payload, ensure_ascii=False, indent=2)[:300]}...", flush=True)
     sys.stdout.flush()
     
     try:
@@ -304,17 +311,47 @@ def upload_to_cafe24(access_token, title, content, original_link, attachments):
         
         if res.status_code == 201:
             print("\n" + "=" * 70, flush=True)
-            print("🎉 게시글 업로드 성공! (텍스트만)", flush=True)
+            print("🎉 게시글 업로드 성공! (이미지 임베드)", flush=True)
             print("=" * 70, flush=True)
             print(f"   📝 제목: {title}", flush=True)
             print(f"   ✍️  작성자: {WRITER_NAME}", flush=True)
-            print(f"   📌 이미지는 원문 링크에서 확인 가능", flush=True)
+            print(f"   🖼️  이미지: {len(attachments)}개 (Base64 임베드)", flush=True)
             print(f"   🔗 확인: https://{MALL_ID}.cafe24.com/board/gallery/{BOARD_NO}/", flush=True)
             print("=" * 70, flush=True)
             sys.stdout.flush()
         else:
             print(f"\n❌ [ERROR] 업로드 실패 (HTTP {res.status_code})", flush=True)
             print(f"   전체 응답: {res.text}", flush=True)
+            
+            # Base64 임베드 실패 시, 이미지 URL만 링크로 시도
+            print(f"\n⚠️  Base64 임베드 실패, 텍스트만 + 원문 링크로 재시도...", flush=True)
+            sys.stdout.flush()
+            
+            text_only_content = f"{content}<br><br>⚠️ 이미지는 원문 링크에서 확인하세요<br><a href='{original_link}' target='_blank'>📝 원문 보러가기 (이미지 포함)</a>"
+            
+            payload_text = {
+                "shop_no": 1,
+                "request": {
+                    "writer": WRITER_NAME,
+                    "title": title + " [텍스트]",
+                    "content": text_only_content,
+                    "client_ip": "127.0.0.1",
+                    "password": PASSWORD,
+                    "notice": "F",
+                    "fixed": "F",
+                    "secret": "F"
+                }
+            }
+            
+            res2 = requests.post(url, headers=headers, json=payload_text, timeout=30)
+            
+            print(f"🔍 [DEBUG] 텍스트 전용 응답: {res2.status_code}", flush=True)
+            print(f"🔍 [DEBUG] 텍스트 전용 본문: {res2.text[:300]}", flush=True)
+            
+            if res2.status_code != 201:
+                print(f"❌ 텍스트 전용도 실패. 갤러리 게시판은 이미지 필수일 가능성 높음.", flush=True)
+                print(f"   대안: 일반 게시판(board_no를 다른 번호로 변경) 사용 권장", flush=True)
+            
             sys.stdout.flush()
             sys.exit(1)
             
@@ -328,7 +365,7 @@ def upload_to_cafe24(access_token, title, content, original_link, attachments):
 # ============================================================================
 def main():
     print("\n" + "=" * 70, flush=True)
-    print("🚀 네이버 → 카페24 자동 포스팅 시작 (GPT 조언 반영)", flush=True)
+    print("🚀 네이버 → 카페24 자동 포스팅 시작 (이미지 Base64 임베드)", flush=True)
     print("=" * 70 + "\n", flush=True)
     sys.stdout.flush()
     
@@ -352,7 +389,7 @@ def main():
         # 3. 본문 및 이미지 추출
         content, attachments = extract_content_and_images(real_url)
         
-        # 4. 카페24 업로드
+        # 4. 카페24 업로드 (이미지 Base64 임베드)
         upload_to_cafe24(access_token, title, content, original_link, attachments)
         
         print("\n✅ 모든 작업 완료!\n", flush=True)
