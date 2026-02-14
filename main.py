@@ -26,8 +26,6 @@ PA_TOKEN = os.environ.get('PA_TOKEN')
 GITHUB_REPO = os.environ.get('GITHUB_REPOSITORY')
 
 BOARD_NO = 8
-PASSWORD = "1234"
-WRITER_NAME = "메디힐리"
 RSS_URL = "https://rss.blog.naver.com/mediheally_lab.xml"
 
 # ============================================================================
@@ -41,8 +39,6 @@ print(f"   REFRESH_TOKEN    : {'✅ ' + REFRESH_TOKEN[:20] + '...' if REFRESH_TO
 print(f"   PA_TOKEN         : {'✅ 있음' if PA_TOKEN else '❌ None'}", flush=True)
 print(f"   GITHUB_REPO      : {'✅ ' + GITHUB_REPO if GITHUB_REPO else '❌ None'}", flush=True)
 print(f"   BOARD_NO         : {BOARD_NO}", flush=True)
-print(f"   PASSWORD         : {PASSWORD}", flush=True)
-print(f"   WRITER_NAME      : {WRITER_NAME}", flush=True)
 print(f"   RSS_URL          : {RSS_URL}", flush=True)
 print("=" * 70 + "\n", flush=True)
 sys.stdout.flush()
@@ -137,7 +133,7 @@ def fetch_latest_post():
     """
     네이버 블로그 RSS에서 최신 글 가져오기
     """
-    print("📡 [2/4] 네이버 블로그 최신 글 크롤링 시작", flush=True)
+    print("📡 [2/5] 네이버 블로그 최신 글 크롤링 시작", flush=True)
     print("-" * 70, flush=True)
     sys.stdout.flush()
     
@@ -165,7 +161,7 @@ def fetch_latest_post():
         
         real_url = f"https://blog.naver.com/PostView.naver?blogId=mediheally_lab&logNo={log_no}"
         
-        print(f"✅ [2/4] 최신 글 정보 수집 완료\n", flush=True)
+        print(f"✅ [2/5] 최신 글 정보 수집 완료\n", flush=True)
         sys.stdout.flush()
         
         return post_title, post_link, real_url
@@ -176,13 +172,13 @@ def fetch_latest_post():
         sys.exit(1)
 
 # ============================================================================
-# 3. 본문 및 이미지 추출
+# 3. 본문 및 이미지 추출 (Base64 변환 유지)
 # ============================================================================
 def extract_content_and_images(real_url):
     """
-    네이버 블로그 본문 및 이미지 추출 (최대 5개)
+    네이버 블로그 본문 및 이미지 추출 (Base64 변환)
     """
-    print("🖼️  [3/4] 본문 및 이미지 추출 시작", flush=True)
+    print("🖼️  [3/5] 본문 및 이미지 추출 시작", flush=True)
     print("-" * 70, flush=True)
     sys.stdout.flush()
     
@@ -205,15 +201,15 @@ def extract_content_and_images(real_url):
         print(f"✅ 본문 영역 발견", flush=True)
         sys.stdout.flush()
         
-        # 이미지 추출
-        attachments = []
+        # 이미지 추출 및 Base64 변환
+        images = []
         img_tags = content_area.find_all('img')
         
         print(f"🔍 [DEBUG] 총 {len(img_tags)}개 이미지 태그 발견", flush=True)
         sys.stdout.flush()
         
         for idx, img in enumerate(img_tags):
-            if idx >= 5:
+            if idx >= 5:  # 최대 5개
                 break
             
             src = img.get('src') or img.get('data-lazy-src') or img.get('data-src')
@@ -223,11 +219,13 @@ def extract_content_and_images(real_url):
                     img_res = requests.get(src, headers=headers, timeout=10)
                     img_res.raise_for_status()
                     
+                    # Base64 변환
                     b64_img = base64.b64encode(img_res.content).decode()
                     
-                    attachments.append({
+                    images.append({
                         "filename": f"image_{idx+1}.jpg",
-                        "file_data": b64_img
+                        "base64": b64_img,
+                        "content_type": "image/jpeg"
                     })
                     
                     print(f"   ✅ 이미지 {idx+1} 다운로드 완료 ({len(img_res.content):,} bytes)", flush=True)
@@ -240,11 +238,11 @@ def extract_content_and_images(real_url):
         # 본문 텍스트
         text_content = content_area.get_text(separator='\n', strip=True)
         
-        print(f"✅ 총 {len(attachments)}개 이미지 추출 완료", flush=True)
-        print(f"✅ [3/4] 콘텐츠 추출 완료\n", flush=True)
+        print(f"✅ 총 {len(images)}개 이미지 추출 완료", flush=True)
+        print(f"✅ [3/5] 콘텐츠 추출 완료\n", flush=True)
         sys.stdout.flush()
         
-        return text_content, attachments
+        return text_content, images
         
     except Exception as e:
         print(f"❌ [ERROR] 콘텐츠 추출 실패: {e}", flush=True)
@@ -252,29 +250,96 @@ def extract_content_and_images(real_url):
         sys.exit(1)
 
 # ============================================================================
-# 4. 카페24 업로드 (이미지 Base64 임베드)
+# 4. 이미지를 카페24에 업로드 (첨부파일 리소스)
 # ============================================================================
-def upload_to_cafe24(access_token, title, content, original_link, attachments):
+def upload_image_to_cafe24(access_token, image_data):
     """
-    카페24 갤러리 게시판에 업로드 (이미지를 content에 Base64 임베드)
+    카페24 파일 API로 이미지 업로드 → attachment_key 받기
     """
-    print("📤 [4/4] 카페24 갤러리 게시판 업로드 시작", flush=True)
+    url = f"https://{MALL_ID}.cafe24api.com/api/v2/admin/files"
+    
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json",
+        "X-Cafe24-Api-Version": "2025-12-01"
+    }
+    
+    payload = {
+        "file": {
+            "name": image_data["filename"],
+            "content": image_data["base64"],
+            "content_type": image_data["content_type"]
+        }
+    }
+    
+    try:
+        res = requests.post(url, headers=headers, json=payload, timeout=30)
+        
+        print(f"      🔍 업로드 응답: {res.status_code}", flush=True)
+        sys.stdout.flush()
+        
+        if res.status_code in [200, 201]:
+            result = res.json()
+            # attachment_key 또는 file_no 찾기
+            attachment_key = result.get('file', {}).get('attachment_key') or result.get('attachment_key')
+            
+            if attachment_key:
+                print(f"      ✅ attachment_key: {attachment_key}", flush=True)
+                sys.stdout.flush()
+                return attachment_key
+            else:
+                print(f"      ⚠️  attachment_key 없음, 전체 응답: {result}", flush=True)
+                sys.stdout.flush()
+                return None
+        else:
+            print(f"      ❌ 업로드 실패: {res.text[:200]}", flush=True)
+            sys.stdout.flush()
+            return None
+            
+    except Exception as e:
+        print(f"      ❌ 업로드 에러: {e}", flush=True)
+        sys.stdout.flush()
+        return None
+
+# ============================================================================
+# 5. 카페24 갤러리 게시판에 게시글 업로드
+# ============================================================================
+def upload_to_cafe24(access_token, title, content, original_link, images):
+    """
+    카페24 갤러리 게시판에 업로드 (2단계: 이미지 업로드 → 게시글 생성)
+    """
+    print("📤 [4/5] 이미지를 카페24에 업로드 시작", flush=True)
     print("-" * 70, flush=True)
     sys.stdout.flush()
     
-    if not attachments:
+    if not images:
         print("❌ [ERROR] 갤러리 게시판은 이미지가 필수입니다.", flush=True)
         sys.exit(1)
     
-    # ✅ 이미지를 content에 직접 임베드
-    image_html = ""
-    for idx, att in enumerate(attachments, 1):
-        image_html += f'<img src="data:image/jpeg;base64,{att["file_data"]}" alt="이미지 {idx}" style="max-width:100%;"><br>\n'
+    # Step 1: 각 이미지를 파일 API로 업로드
+    attachment_keys = []
     
-    final_content = f"{image_html}<br>{content}<br><br><a href='{original_link}' target='_blank'>📝 원문 보러가기</a>"
+    for idx, img_data in enumerate(images, 1):
+        print(f"   🔄 이미지 {idx}/{len(images)} 업로드 중...", flush=True)
+        sys.stdout.flush()
+        
+        key = upload_image_to_cafe24(access_token, img_data)
+        if key:
+            attachment_keys.append({"attachment_key": key})
     
-    print(f"🔍 [DEBUG] 이미지 {len(attachments)}개를 content에 직접 임베드", flush=True)
+    if not attachment_keys:
+        print("❌ [ERROR] 모든 이미지 업로드 실패", flush=True)
+        sys.exit(1)
+    
+    print(f"✅ {len(attachment_keys)}개 이미지 업로드 완료\n", flush=True)
     sys.stdout.flush()
+    
+    # Step 2: 게시글 생성
+    print("📤 [5/5] 게시글 생성 시작", flush=True)
+    print("-" * 70, flush=True)
+    sys.stdout.flush()
+    
+    final_content = f"{content}\n\n<br><br><a href='{original_link}' target='_blank'>📝 원문 보러가기</a>"
     
     url = f"https://{MALL_ID}.cafe24api.com/api/v2/admin/boards/{BOARD_NO}/articles"
     
@@ -284,79 +349,46 @@ def upload_to_cafe24(access_token, title, content, original_link, attachments):
         "X-Cafe24-Api-Version": "2025-12-01"
     }
     
+    # ✅ 2단계 구조: attachments에 attachment_key 연결
     payload = {
         "shop_no": 1,
         "request": {
-            "writer": WRITER_NAME,
             "title": title,
-            "content": final_content,  # 이미지 포함된 content
+            "content": final_content,
             "client_ip": "127.0.0.1",
-            "password": PASSWORD,
-            "notice": "F",
-            "fixed": "F",
-            "secret": "F"
+            "attachments": attachment_keys  # ← 핵심!
         }
     }
     
-    print(f"🔍 [DEBUG] Content 길이: {len(final_content):,} 문자", flush=True)
-    print(f"🔍 [DEBUG] URL: {url}", flush=True)
+    print(f"🔍 [DEBUG] Payload:", flush=True)
+    print(json.dumps(payload, ensure_ascii=False, indent=2)[:500] + "...", flush=True)
     sys.stdout.flush()
     
     try:
         res = requests.post(url, headers=headers, json=payload, timeout=30)
         
         print(f"\n🔍 [DEBUG] 응답 코드: {res.status_code}", flush=True)
-        print(f"🔍 [DEBUG] 응답 본문: {res.text[:500]}", flush=True)
+        print(f"🔍 [DEBUG] 응답: {res.text[:500]}", flush=True)
         sys.stdout.flush()
         
         if res.status_code == 201:
             print("\n" + "=" * 70, flush=True)
-            print("🎉 게시글 업로드 성공! (이미지 임베드)", flush=True)
+            print("🎉 게시글 업로드 성공!", flush=True)
             print("=" * 70, flush=True)
             print(f"   📝 제목: {title}", flush=True)
-            print(f"   ✍️  작성자: {WRITER_NAME}", flush=True)
-            print(f"   🖼️  이미지: {len(attachments)}개 (Base64 임베드)", flush=True)
+            print(f"   ✍️  작성자: 메디힐리 (관리자)", flush=True)
+            print(f"   🖼️  이미지: {len(attachment_keys)}개", flush=True)
             print(f"   🔗 확인: https://{MALL_ID}.cafe24.com/board/gallery/{BOARD_NO}/", flush=True)
             print("=" * 70, flush=True)
             sys.stdout.flush()
         else:
-            print(f"\n❌ [ERROR] 업로드 실패 (HTTP {res.status_code})", flush=True)
+            print(f"\n❌ [ERROR] 게시글 생성 실패 (HTTP {res.status_code})", flush=True)
             print(f"   전체 응답: {res.text}", flush=True)
-            
-            # Base64 임베드 실패 시, 이미지 URL만 링크로 시도
-            print(f"\n⚠️  Base64 임베드 실패, 텍스트만 + 원문 링크로 재시도...", flush=True)
-            sys.stdout.flush()
-            
-            text_only_content = f"{content}<br><br>⚠️ 이미지는 원문 링크에서 확인하세요<br><a href='{original_link}' target='_blank'>📝 원문 보러가기 (이미지 포함)</a>"
-            
-            payload_text = {
-                "shop_no": 1,
-                "request": {
-                    "writer": WRITER_NAME,
-                    "title": title + " [텍스트]",
-                    "content": text_only_content,
-                    "client_ip": "127.0.0.1",
-                    "password": PASSWORD,
-                    "notice": "F",
-                    "fixed": "F",
-                    "secret": "F"
-                }
-            }
-            
-            res2 = requests.post(url, headers=headers, json=payload_text, timeout=30)
-            
-            print(f"🔍 [DEBUG] 텍스트 전용 응답: {res2.status_code}", flush=True)
-            print(f"🔍 [DEBUG] 텍스트 전용 본문: {res2.text[:300]}", flush=True)
-            
-            if res2.status_code != 201:
-                print(f"❌ 텍스트 전용도 실패. 갤러리 게시판은 이미지 필수일 가능성 높음.", flush=True)
-                print(f"   대안: 일반 게시판(board_no를 다른 번호로 변경) 사용 권장", flush=True)
-            
             sys.stdout.flush()
             sys.exit(1)
             
     except Exception as e:
-        print(f"❌ [ERROR] 업로드 요청 실패: {e}", flush=True)
+        print(f"❌ [ERROR] 게시글 생성 에러: {e}", flush=True)
         sys.stdout.flush()
         sys.exit(1)
 
@@ -365,7 +397,7 @@ def upload_to_cafe24(access_token, title, content, original_link, attachments):
 # ============================================================================
 def main():
     print("\n" + "=" * 70, flush=True)
-    print("🚀 네이버 → 카페24 자동 포스팅 시작 (이미지 Base64 임베드)", flush=True)
+    print("🚀 네이버 → 카페24 자동 포스팅 (2단계 업로드)", flush=True)
     print("=" * 70 + "\n", flush=True)
     sys.stdout.flush()
     
@@ -386,11 +418,11 @@ def main():
         # 2. 최신 글 가져오기
         title, original_link, real_url = fetch_latest_post()
         
-        # 3. 본문 및 이미지 추출
-        content, attachments = extract_content_and_images(real_url)
+        # 3. 본문 및 이미지 추출 (Base64 변환)
+        content, images = extract_content_and_images(real_url)
         
-        # 4. 카페24 업로드 (이미지 Base64 임베드)
-        upload_to_cafe24(access_token, title, content, original_link, attachments)
+        # 4~5. 이미지 업로드 → 게시글 생성
+        upload_to_cafe24(access_token, title, content, original_link, images)
         
         print("\n✅ 모든 작업 완료!\n", flush=True)
         sys.stdout.flush()
