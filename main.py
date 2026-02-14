@@ -183,10 +183,19 @@ def fetch_latest_post():
         
         print(f"✅ RSS 파싱 완료")
         print(f"   제목: {post_title}")
-        print(f"   링크: {post_link}")
+        print(f"   원본 링크: {post_link}")
         
-        # iframe 주소를 실제 주소로 변환
-        log_no = post_link.split('/')[-1]
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # 🔧 수정: logNo만 추출 (쿼리 파라미터 제거)
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # 예: https://blog.naver.com/mediheally_lab/224179364627?fromRss=true&trackingCode=rss
+        # → logNo = 224179364627 (숫자만)
+        
+        path_part = post_link.split('/')[-1]  # "224179364627?fromRss=true&trackingCode=rss"
+        log_no = path_part.split('?')[0]      # "224179364627" ← 쿼리 파라미터 제거!
+        
+        print(f"🔍 [DEBUG] 추출된 logNo: {log_no}")
+        
         real_url = f"https://blog.naver.com/PostView.naver?blogId=mediheally_lab&logNo={log_no}"
         
         print(f"🔍 [DEBUG] 실제 URL 생성: {real_url}")
@@ -200,7 +209,6 @@ def fetch_latest_post():
         import traceback
         print(f"🔍 [DEBUG] Traceback:\n{traceback.format_exc()}")
         sys.exit(1)
-
 # ============================================================================
 # 3. 본문 및 이미지 추출
 # ============================================================================
