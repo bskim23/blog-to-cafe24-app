@@ -252,37 +252,21 @@ def extract_content_and_images(real_url):
         sys.exit(1)
 
 # ============================================================================
-# 4. 카페24 업로드
+# 4. 카페24 업로드 (여러 조합 자동 시도)
 # ============================================================================
 def upload_to_cafe24(access_token, title, content, original_link, attachments):
     """
-    카페24 갤러리 게시판에 업로드
+    카페24 갤러리 게시판에 업로드 (여러 조합 자동 시도)
     """
     print("📤 [4/4] 카페24 갤러리 게시판 업로드 시작", flush=True)
     print("-" * 70, flush=True)
     sys.stdout.flush()
     
     if not attachments:
-        print("❌ [ERROR] 갤러리 게시판은 최소 1개의 이미지가 필요합니다.", flush=True)
+        print("❌ [ERROR] 이미지가 없습니다.", flush=True)
         sys.exit(1)
     
-    # 본문 구성
     final_content = f"{content}\n\n<br><br><a href='{original_link}' target='_blank'>📝 원문 보러가기</a>"
-    
-    # Payload 구성
-    payload = {
-        "shop_no": 1,
-        "request": {
-            "board_no": BOARD_NO,
-            "title": title,
-            "content": final_content,
-            "writer": WRITER_NAME,
-            "password": PASSWORD,
-            "is_notice": "F",
-            "is_secret": "F",
-            "attachments": attachments
-        }
-    }
     
     url = f"https://{MALL_ID}.cafe24api.com/api/v2/admin/boards/{BOARD_NO}/articles"
     headers = {
@@ -291,35 +275,157 @@ def upload_to_cafe24(access_token, title, content, original_link, attachments):
         "X-Cafe24-Api-Version": "2025-12-01"
     }
     
-    print(f"🔍 [DEBUG] POST 요청 전송 중...", flush=True)
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # 여러 Payload 조합 준비
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    
+    payloads = [
+        # 조합 1: writer 제거, password 유지
+        {
+            "name": "writer 제거",
+            "payload": {
+                "shop_no": 1,
+                "request": {
+                    "board_no": BOARD_NO,
+                    "title": title,
+                    "content": final_content,
+                    "password": PASSWORD,
+                    "is_notice": "F",
+                    "is_secret": "F",
+                    "attachments": attachments
+                }
+            }
+        },
+        
+        # 조합 2: writer, password 둘 다 제거
+        {
+            "name": "writer+password 제거",
+            "payload": {
+                "shop_no": 1,
+                "request": {
+                    "board_no": BOARD_NO,
+                    "title": title,
+                    "content": final_content,
+                    "is_notice": "F",
+                    "is_secret": "F",
+                    "attachments": attachments
+                }
+            }
+        },
+        
+        # 조합 3: writer 제거, attachments도 제거 (이미지를 content에 임베드)
+        {
+            "name": "writer+attachments 제거 (이미지 임베드)",
+            "payload": {
+                "shop_no": 1,
+                "request": {
+                    "board_no": BOARD_NO,
+                    "title": title,
+                    "content": final_content + "\n" + "".join([
+                        f'<img src="data:image/jpeg;base64,{att["file_data"]}" /><br>'
+                        for att in attachments
+                    ]),
+                    "password": PASSWORD,
+                    "is_notice": "F",
+                    "is_secret": "F"
+                }
+            }
+        },
+        
+        # 조합 4: shop_no 제거, writer 제거
+        {
+            "name": "shop_no+writer 제거",
+            "payload": {
+                "request": {
+                    "board_no": BOARD_NO,
+                    "title": title,
+                    "content": final_content,
+                    "password": PASSWORD,
+                    "is_notice": "F",
+                    "is_secret": "F",
+                    "attachments": attachments
+                }
+            }
+        },
+        
+        # 조합 5: request 래핑 제거, writer 제거
+        {
+            "name": "request 래핑 제거",
+            "payload": {
+                "shop_no": 1,
+                "board_no": BOARD_NO,
+                "title": title,
+                "content": final_content,
+                "password": PASSWORD,
+                "is_notice": "F",
+                "is_secret": "F",
+                "attachments": attachments
+            }
+        },
+        
+        # 조합 6: 최소 필드만 (제목, 내용, 이미지)
+        {
+            "name": "최소 필드",
+            "payload": {
+                "shop_no": 1,
+                "request": {
+                    "board_no": BOARD_NO,
+                    "title": title,
+                    "content": final_content,
+                    "attachments": attachments
+                }
+            }
+        }
+    ]
+    
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # 각 조합 순서대로 시도
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    
+    for idx, config in enumerate(payloads, 1):
+        print(f"\n🔍 [시도 {idx}/{len(payloads)}] {config['name']}", flush=True)
+        sys.stdout.flush()
+        
+        try:
+            res = requests.post(url, headers=headers, json=config['payload'], timeout=30)
+            
+            print(f"   응답 코드: {res.status_code}", flush=True)
+            sys.stdout.flush()
+            
+            if res.status_code == 201:
+                print("\n" + "=" * 70, flush=True)
+                print(f"🎉 성공! ({config['name']})", flush=True)
+                print("=" * 70, flush=True)
+                print(f"   📝 제목: {title}", flush=True)
+                print(f"   🖼️  이미지: {len(attachments)}개", flush=True)
+                print(f"   🔗 확인: https://{MALL_ID}.cafe24.com/board/gallery/{BOARD_NO}/", flush=True)
+                print("=" * 70, flush=True)
+                sys.stdout.flush()
+                return  # 성공하면 즉시 종료
+            
+            else:
+                print(f"   ❌ 실패: {res.text[:100]}", flush=True)
+                sys.stdout.flush()
+                
+        except Exception as e:
+            print(f"   ❌ 에러: {e}", flush=True)
+            sys.stdout.flush()
+    
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # 모든 조합 실패
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    
+    print("\n" + "=" * 70, flush=True)
+    print("❌ 모든 조합 실패", flush=True)
+    print("=" * 70, flush=True)
+    print("다음 조치 필요:", flush=True)
+    print("1. 카페24 고객센터 문의 (평일)", flush=True)
+    print("2. API 문서 확인: https://developers.cafe24.com", flush=True)
+    print("3. 갤러리 게시판이 아닌 일반 게시판 테스트", flush=True)
+    print("=" * 70, flush=True)
     sys.stdout.flush()
     
-    try:
-        res = requests.post(url, headers=headers, json=payload, timeout=30)
-        
-        print(f"🔍 [DEBUG] 응답 상태 코드: {res.status_code}", flush=True)
-        sys.stdout.flush()
-        
-        if res.status_code == 201:
-            print("\n" + "=" * 70, flush=True)
-            print("🎉 게시글 업로드 성공!", flush=True)
-            print("=" * 70, flush=True)
-            print(f"   📝 제목: {title}", flush=True)
-            print(f"   ✍️  작성자: {WRITER_NAME}", flush=True)
-            print(f"   🖼️  이미지: {len(attachments)}개", flush=True)
-            print(f"   🔗 확인: https://{MALL_ID}.cafe24.com/board/gallery/{BOARD_NO}/", flush=True)
-            print("=" * 70, flush=True)
-            sys.stdout.flush()
-        else:
-            print(f"❌ [ERROR] 업로드 실패 (HTTP {res.status_code})", flush=True)
-            print(f"   응답: {res.text}", flush=True)
-            sys.stdout.flush()
-            sys.exit(1)
-            
-    except Exception as e:
-        print(f"❌ [ERROR] 업로드 요청 실패: {e}", flush=True)
-        sys.stdout.flush()
-        sys.exit(1)
+    sys.exit(1)
 
 # ============================================================================
 # 메인 실행
@@ -350,7 +456,7 @@ def main():
         # 3. 본문 및 이미지 추출
         content, attachments = extract_content_and_images(real_url)
         
-        # 4. 카페24 업로드
+        # 4. 카페24 업로드 (여러 조합 자동 시도)
         upload_to_cafe24(access_token, title, content, original_link, attachments)
         
         print("\n✅ 모든 작업 완료!\n", flush=True)
