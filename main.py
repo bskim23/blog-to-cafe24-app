@@ -172,7 +172,7 @@ def fetch_latest_post():
         sys.exit(1)
 
 # ============================================================================
-# 3. 본문 및 이미지 추출 (Base64 변환 유지)
+# 3. 본문 및 이미지 추출 (Base64 변환)
 # ============================================================================
 def extract_content_and_images(real_url):
     """
@@ -224,8 +224,7 @@ def extract_content_and_images(real_url):
                     
                     images.append({
                         "filename": f"image_{idx+1}.jpg",
-                        "base64": b64_img,
-                        "content_type": "image/jpeg"
+                        "base64": b64_img
                     })
                     
                     print(f"   ✅ 이미지 {idx+1} 다운로드 완료 ({len(img_res.content):,} bytes)", flush=True)
@@ -250,13 +249,13 @@ def extract_content_and_images(real_url):
         sys.exit(1)
 
 # ============================================================================
-# 4. 이미지를 카페24에 업로드 (첨부파일 리소스)
+# 4. 이미지를 카페24 Products API로 업로드 (URL 받기)
 # ============================================================================
 def upload_image_to_cafe24(access_token, image_data):
     """
-    카페24 파일 API로 이미지 업로드 → attachment_key 받기
+    카페24 Products Images API로 이미지 업로드 → 이미지 URL 받기
     """
-    url = f"https://{MALL_ID}.cafe24api.com/api/v2/admin/files"
+    url = f"https://{MALL_ID}.cafe24api.com/api/v2/admin/products/images"
     
     headers = {
         "Authorization": f"Bearer {access_token}",
@@ -264,11 +263,10 @@ def upload_image_to_cafe24(access_token, image_data):
         "X-Cafe24-Api-Version": "2025-12-01"
     }
     
+    # ✅ Products Images API 스펙
     payload = {
-        "file": {
-            "name": image_data["filename"],
-            "content": image_data["base64"],
-            "content_type": image_data["content_type"]
+        "request": {
+            "image": image_data["base64"]
         }
     }
     
@@ -280,15 +278,25 @@ def upload_image_to_cafe24(access_token, image_data):
         
         if res.status_code in [200, 201]:
             result = res.json()
-            # attachment_key 또는 file_no 찾기
-            attachment_key = result.get('file', {}).get('attachment_key') or result.get('attachment_key')
             
-            if attachment_key:
-                print(f"      ✅ attachment_key: {attachment_key}", flush=True)
+            # 이미지 URL 추출
+            image_url = None
+            
+            # 가능한 응답 구조들
+            if 'image' in result:
+                if isinstance(result['image'], dict):
+                    image_url = result['image'].get('url') or result['image'].get('image_url')
+                elif isinstance(result['image'], str):
+                    image_url = result['image']
+            elif 'url' in result:
+                image_url = result['url']
+            
+            if image_url:
+                print(f"      ✅ 이미지 URL: {image_url[:50]}...", flush=True)
                 sys.stdout.flush()
-                return attachment_key
+                return image_url
             else:
-                print(f"      ⚠️  attachment_key 없음, 전체 응답: {result}", flush=True)
+                print(f"      ⚠️  이미지 URL 없음, 전체 응답: {result}", flush=True)
                 sys.stdout.flush()
                 return None
         else:
@@ -306,7 +314,7 @@ def upload_image_to_cafe24(access_token, image_data):
 # ============================================================================
 def upload_to_cafe24(access_token, title, content, original_link, images):
     """
-    카페24 갤러리 게시판에 업로드 (2단계: 이미지 업로드 → 게시글 생성)
+    카페24 갤러리 게시판에 업로드 (이미지 URL 방식)
     """
     print("📤 [4/5] 이미지를 카페24에 업로드 시작", flush=True)
     print("-" * 70, flush=True)
@@ -316,30 +324,36 @@ def upload_to_cafe24(access_token, title, content, original_link, images):
         print("❌ [ERROR] 갤러리 게시판은 이미지가 필수입니다.", flush=True)
         sys.exit(1)
     
-    # Step 1: 각 이미지를 파일 API로 업로드
-    attachment_keys = []
+    # Step 1: 각 이미지를 Products Images API로 업로드
+    image_urls = []
     
     for idx, img_data in enumerate(images, 1):
         print(f"   🔄 이미지 {idx}/{len(images)} 업로드 중...", flush=True)
         sys.stdout.flush()
         
-        key = upload_image_to_cafe24(access_token, img_data)
-        if key:
-            attachment_keys.append({"attachment_key": key})
+        url = upload_image_to_cafe24(access_token, img_data)
+        if url:
+            image_urls.append(url)
     
-    if not attachment_keys:
+    if not image_urls:
         print("❌ [ERROR] 모든 이미지 업로드 실패", flush=True)
         sys.exit(1)
     
-    print(f"✅ {len(attachment_keys)}개 이미지 업로드 완료\n", flush=True)
+    print(f"✅ {len(image_urls)}개 이미지 업로드 완료\n", flush=True)
     sys.stdout.flush()
     
-    # Step 2: 게시글 생성
+    # Step 2: 이미지 URL을 HTML로 변환
     print("📤 [5/5] 게시글 생성 시작", flush=True)
     print("-" * 70, flush=True)
     sys.stdout.flush()
     
-    final_content = f"{content}\n\n<br><br><a href='{original_link}' target='_blank'>📝 원문 보러가기</a>"
+    # ✅ 이미지 HTML 생성
+    image_html = ""
+    for idx, img_url in enumerate(image_urls, 1):
+        image_html += f'<img src="{img_url}" alt="이미지 {idx}" style="max-width:100%;"><br>\n'
+    
+    # 최종 content
+    final_content = f"{image_html}<br><br>{content}<br><br><a href='{original_link}' target='_blank'>📝 원문 보러가기</a>"
     
     url = f"https://{MALL_ID}.cafe24api.com/api/v2/admin/boards/{BOARD_NO}/articles"
     
@@ -349,19 +363,18 @@ def upload_to_cafe24(access_token, title, content, original_link, images):
         "X-Cafe24-Api-Version": "2025-12-01"
     }
     
-    # ✅ 2단계 구조: attachments에 attachment_key 연결
+    # ✅ 게시글 생성 (이미지는 content HTML에 포함)
     payload = {
         "shop_no": 1,
         "request": {
             "title": title,
             "content": final_content,
-            "client_ip": "127.0.0.1",
-            "attachments": attachment_keys  # ← 핵심!
+            "client_ip": "127.0.0.1"
         }
     }
     
-    print(f"🔍 [DEBUG] Payload:", flush=True)
-    print(json.dumps(payload, ensure_ascii=False, indent=2)[:500] + "...", flush=True)
+    print(f"🔍 [DEBUG] Content 길이: {len(final_content):,} 문자", flush=True)
+    print(f"🔍 [DEBUG] 이미지 {len(image_urls)}개 HTML 삽입", flush=True)
     sys.stdout.flush()
     
     try:
@@ -377,7 +390,7 @@ def upload_to_cafe24(access_token, title, content, original_link, images):
             print("=" * 70, flush=True)
             print(f"   📝 제목: {title}", flush=True)
             print(f"   ✍️  작성자: 메디힐리 (관리자)", flush=True)
-            print(f"   🖼️  이미지: {len(attachment_keys)}개", flush=True)
+            print(f"   🖼️  이미지: {len(image_urls)}개", flush=True)
             print(f"   🔗 확인: https://{MALL_ID}.cafe24.com/board/gallery/{BOARD_NO}/", flush=True)
             print("=" * 70, flush=True)
             sys.stdout.flush()
@@ -397,7 +410,7 @@ def upload_to_cafe24(access_token, title, content, original_link, images):
 # ============================================================================
 def main():
     print("\n" + "=" * 70, flush=True)
-    print("🚀 네이버 → 카페24 자동 포스팅 (2단계 업로드)", flush=True)
+    print("🚀 네이버 → 카페24 자동 포스팅 (Products Images API)", flush=True)
     print("=" * 70 + "\n", flush=True)
     sys.stdout.flush()
     
