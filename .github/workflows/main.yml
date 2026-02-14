@@ -2,8 +2,9 @@ name: Naver to Cafe24 Auto Post
 
 on:
   schedule:
+    # 6시간마다 실행 (0시, 6시, 12시, 18시 KST)
     - cron: '0 */6 * * *'
-  workflow_dispatch:
+  workflow_dispatch: # 수동 실행 버튼
 
 jobs:
   auto-post:
@@ -22,7 +23,7 @@ jobs:
         run: |
           pip install requests beautifulsoup4 PyGithub
       
-      - name: 자동 포스팅 실행
+      - name: 테스트 실행
         env:
           CAFE24_CLIENT_ID: ${{ secrets.CAFE24_CLIENT_ID }}
           CAFE24_CLIENT_SECRET: ${{ secrets.CAFE24_CLIENT_SECRET }}
@@ -30,4 +31,4 @@ jobs:
           CAFE24_REFRESH_TOKEN: ${{ secrets.CAFE24_REFRESH_TOKEN }}
           PA_TOKEN: ${{ secrets.PA_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-        run: python -u main.py  # ← -u 추가 (unbuffered)
+        run: python -u test_main.py
