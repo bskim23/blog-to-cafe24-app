@@ -28,10 +28,21 @@ MIN_BYTES_ACCEPT = 80_000   # 이 이상이면 충분히 본문용 가능성이 
 MIN_BYTES_KEEP = 25_000     # 이 이하면 업로드 스킵(스티커/아이콘급 방지)
 MAX_IMAGES = 30
 
+# ✅ 텍스트 표시(한 단계 크게)
+BASE_FONT_SIZE = 17  # 기존(16)보다 한 단계 크게
+
 print("=" * 70, flush=True)
 print("🔍 [DEBUG] 스크립트 시작", flush=True)
 print("=" * 70, flush=True)
 sys.stdout.flush()
+
+# ============================================================================
+# 유틸: HTML 이스케이프
+# ============================================================================
+def escape_html(s: str) -> str:
+    return (s.replace("&", "&amp;")
+             .replace("<", "&lt;")
+             .replace(">", "&gt;"))
 
 # ============================================================================
 # 🔐 토큰 갱신 및 즉시 저장 (유지)
@@ -143,16 +154,14 @@ def is_probably_image_bytes(b: bytes) -> bool:
     if not b or len(b) < 32:
         return False
     head = b[:16]
-    # JPEG/PNG/GIF/WEBP
-    if head.startswith(b"\xff\xd8\xff"):
+    if head.startswith(b"\xff\xd8\xff"):  # jpg
         return True
-    if head.startswith(b"\x89PNG\r\n\x1a\n"):
+    if head.startswith(b"\x89PNG\r\n\x1a\n"):  # png
         return True
-    if head.startswith(b"GIF87a") or head.startswith(b"GIF89a"):
+    if head.startswith(b"GIF87a") or head.startswith(b"GIF89a"):  # gif
         return True
-    if head.startswith(b"RIFF") and b"WEBP" in b[:16]:
+    if head.startswith(b"RIFF") and b"WEBP" in b[:16]:  # webp
         return True
-    # HTML 에러페이지 방지
     if b[:200].lstrip().lower().startswith(b"<!doctype html") or b[:200].lstrip().lower().startswith(b"<html"):
         return False
     return True
@@ -167,7 +176,6 @@ def download_image(url: str, referer: str) -> tuple[bytes | None, str | None]:
         r = requests.get(url, headers=headers, timeout=25, allow_redirects=True)
         if r.status_code != 200 or not r.content:
             return None, None
-        # content-type도 같이 참고
         ctype = (r.headers.get("Content-Type") or "").lower()
         b = r.content
         if ("image/" in ctype) or is_probably_image_bytes(b):
@@ -177,10 +185,6 @@ def download_image(url: str, referer: str) -> tuple[bytes | None, str | None]:
         return None, None
 
 def download_best_image_by_size(base_url: str, referer: str) -> tuple[bytes | None, str | None, int]:
-    """
-    - 후보 URL을 여럿 시도
-    - 성공한 것 중 bytes가 가장 큰 것 선택
-    """
     if not base_url:
         return None, None, 0
 
@@ -202,21 +206,18 @@ def download_best_image_by_size(base_url: str, referer: str) -> tuple[bytes | No
     best_b, best_u, best_sz = None, None, 0
 
     for u in uniq:
-        b, _ctype = download_image(u, referer=referer)
+        b, _ = download_image(u, referer=referer)
         if not b:
             continue
         sz = len(b)
         if sz > best_sz:
             best_b, best_u, best_sz = b, u, sz
-
-        # 충분히 큰 이미지면 조기 종료
         if best_sz >= MIN_BYTES_ACCEPT and ("w2000" in u or "w1200" in u):
             break
 
     return best_b, best_u, best_sz
 
 def pick_img_url_from_tag(img_tag: Tag) -> str | None:
-    # 원본이 숨겨져 있는 경우 우선순위
     for k in ["data-original", "data-ori-src", "data-src", "data-lazy-src", "src"]:
         v = img_tag.get(k)
         if v:
@@ -227,24 +228,18 @@ def pick_img_url_from_tag(img_tag: Tag) -> str | None:
 # 네이버 "외부 링크/OG 카드" 이미지 스킵 규칙
 # ============================================================================
 def is_link_card_component(comp: Tag) -> bool:
-    """
-    네이버에서 본문 하단(혹은 중간)에 '별도 링크로 넘어가는 카드' 컴포넌트는
-    대표적으로 se-oglink / se-link / se-section-oglink 류 클래스/데이터를 가짐.
-    """
     cls = " ".join(comp.get("class", [])).lower()
     if "oglink" in cls or "se-oglink" in cls or "se-link" in cls:
         return True
-    # data-linkdata / data-link 같은 속성도 카드류 단서
     for attr in ["data-linkdata", "data-link", "data-linktype", "data-oglink"]:
         if comp.has_attr(attr):
             return True
-    # 내부에 a태그가 있고, 카드 구조로 보이면 제외(보수적으로)
     if comp.find("a") and comp.find(class_=re.compile(r"oglink|se-oglink|se-link", re.I)):
         return True
     return False
 
 # ============================================================================
-# 3. 본문을 "컴포넌트 단위"로 순회하여 (순서 보존/중복 제거)
+# 3. 본문을 "컴포넌트 단위"로 순회하여 (순서 보존/중복 제거/해시태그 행갈이 방지)
 # ============================================================================
 def extract_blocks_from_naver(real_url: str) -> list[dict]:
     print("🧱 [3/5] 본문 블록(텍스트/이미지) 추출 시작 (컴포넌트 단위)", flush=True)
@@ -264,61 +259,63 @@ def extract_blocks_from_naver(real_url: str) -> list[dict]:
     print("✅ 본문 영역 발견", flush=True)
     sys.stdout.flush()
 
-    # ✅ 핵심: se-component를 문서 순서대로
     components = content_area.select("div.se-component")
     blocks: list[dict] = []
     img_cnt = 0
 
-    prev_text_key = None  # 연속 중복 제거(강력)
-    seen_text_keys = set()  # 전역 중복도 한번 더 방지
+    prev_text_key = None
+    seen_text_keys = set()
 
     for comp in components:
         # 1) 링크 카드 컴포넌트는 통째로 스킵
         if is_link_card_component(comp):
             continue
 
-        cls = " ".join(comp.get("class", [])).lower()
-
         # 2) 이미지 컴포넌트
-        # (se-image, se-component-image 등 다양한 변형이 있으니 img 태그 존재로 판단)
         img_tag = comp.find("img")
-        if img_tag and ("pstatic.net" in (pick_img_url_from_tag(img_tag) or "")):
-            if img_cnt >= MAX_IMAGES:
-                continue
+        if img_tag:
+            src = pick_img_url_from_tag(img_tag) or ""
+            if "pstatic.net" in src:
+                if img_cnt >= MAX_IMAGES:
+                    continue
 
-            src = pick_img_url_from_tag(img_tag)
-            best_b, best_u, best_sz = download_best_image_by_size(src, referer=real_url)
-            if not best_b:
-                print(f"   ⚠️  이미지 다운로드 실패: {src}", flush=True)
+                best_b, best_u, best_sz = download_best_image_by_size(src, referer=real_url)
+                if not best_b:
+                    print(f"   ⚠️  이미지 다운로드 실패: {src}", flush=True)
+                    sys.stdout.flush()
+                    continue
+                if best_sz < MIN_BYTES_KEEP:
+                    print(f"   ⚠️  이미지 스킵(너무 작음 {best_sz:,} bytes): {best_u}", flush=True)
+                    sys.stdout.flush()
+                    continue
+
+                img_cnt += 1
+                blocks.append({
+                    "type": "image",
+                    "filename": f"image_{img_cnt}.jpg",
+                    "base64": base64.b64encode(best_b).decode(),
+                    "bytes": best_sz,
+                    "picked_url": best_u
+                })
+                print(f"   ✅ 이미지 {img_cnt} 선택 ({best_sz:,} bytes)", flush=True)
                 sys.stdout.flush()
                 continue
-            if best_sz < MIN_BYTES_KEEP:
-                print(f"   ⚠️  이미지 스킵(너무 작음 {best_sz:,} bytes): {best_u}", flush=True)
-                sys.stdout.flush()
-                continue
 
-            img_cnt += 1
-            blocks.append({
-                "type": "image",
-                "filename": f"image_{img_cnt}.jpg",
-                "base64": base64.b64encode(best_b).decode(),
-                "bytes": best_sz,
-                "picked_url": best_u
-            })
-            print(f"   ✅ 이미지 {img_cnt} 선택 ({best_sz:,} bytes)", flush=True)
-            sys.stdout.flush()
-            continue
-
-        # 3) 텍스트 컴포넌트: 컴포넌트당 1회만 추출(중복 방지 핵심)
-        text = comp.get_text(separator="\n", strip=True)
+        # 3) 텍스트 컴포넌트 (해시태그 행갈이 방지 핵심: separator=' ')
+        text = comp.get_text(separator=" ", strip=True)
         if text:
-            # 공백 정규화로 중복 키 생성
-            key = re.sub(r"\s+", " ", text).strip()
+            # 공백 정규화
+            text = re.sub(r"\s+", " ", text).strip()
 
-            # (a) 바로 직전과 동일하면 제거
+            # (선택) 해시태그가 여러 개면 한 줄로 재정렬
+            tags = re.findall(r"#\S+", text)
+            if len(tags) >= 2:
+                text = " ".join(tags)
+
+            key = text
+
             if prev_text_key == key:
                 continue
-            # (b) 글 전체에서 동일 텍스트가 반복되면 제거(심각하다고 하셔서 강하게)
             if key in seen_text_keys:
                 continue
 
@@ -384,7 +381,7 @@ def create_board_article(access_token: str, title: str, content_html: str, thumb
     return requests.post(url, headers=headers, json=payload, timeout=30)
 
 # ============================================================================
-# 오케스트레이션: 순서 그대로 HTML 조립
+# 오케스트레이션: 순서 그대로 HTML 조립 (줄바꿈은 <br>, <p> 분리 금지)
 # ============================================================================
 def upload_to_cafe24(access_token: str, title: str, blocks: list[dict]):
     print("📤 [4/5] 카페24 업로드 시작", flush=True)
@@ -395,8 +392,10 @@ def upload_to_cafe24(access_token: str, title: str, blocks: list[dict]):
     first_image_url = None
     uploaded_images = 0
 
-    # 텍스트가 작고 이상한 문제 완화(기본 래퍼)
-    html_parts.append('<div style="font-size:16px; line-height:1.75; letter-spacing:-0.2px;">')
+    # ✅ 전체 래퍼 폰트 한 단계 크게
+    html_parts.append(
+        f'<div style="font-size:{BASE_FONT_SIZE}px; line-height:1.8; letter-spacing:-0.2px; word-break:keep-all;">'
+    )
 
     for b in blocks:
         if b["type"] == "image":
@@ -412,10 +411,11 @@ def upload_to_cafe24(access_token: str, title: str, blocks: list[dict]):
                 "</div>"
             )
         else:
-            # 문단 단위로 출력
-            lines = [x.strip() for x in b["text"].split("\n") if x.strip()]
-            for line in lines:
-                html_parts.append(f'<p style="margin:0 0 12px 0;">{line}</p>')
+            # ✅ 문단 하나 유지 + 줄바꿈은 <br>
+            safe_text = escape_html(b["text"]).replace("\n", "<br>")
+            html_parts.append(
+                f'<p style="margin:0 0 14px 0; font-size:{BASE_FONT_SIZE}px; line-height:1.8;">{safe_text}</p>'
+            )
 
     html_parts.append("</div>")
 
