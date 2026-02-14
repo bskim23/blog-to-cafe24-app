@@ -1,38 +1,33 @@
-#!/usr/bin/env python3
-import sys
-import os
+name: Naver to Cafe24 Auto Post
 
-print("=" * 70, flush=True)
-print("🔍 TEST 시작", flush=True)
-print("=" * 70, flush=True)
-sys.stdout.flush()
+on:
+  schedule:
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
 
-print(f"\nPython 버전: {sys.version}", flush=True)
-print(f"작업 디렉토리: {os.getcwd()}", flush=True)
-print(f"main.py 존재 여부: {os.path.exists('main.py')}", flush=True)
-
-print("\n환경변수 확인:", flush=True)
-print(f"CAFE24_MALL_ID: {'✅' if os.environ.get('CAFE24_MALL_ID') else '❌'}", flush=True)
-print(f"CAFE24_CLIENT_ID: {'✅' if os.environ.get('CAFE24_CLIENT_ID') else '❌'}", flush=True)
-
-print("\nimport 테스트:", flush=True)
-try:
-    import requests
-    print("✅ requests", flush=True)
-except Exception as e:
-    print(f"❌ requests: {e}", flush=True)
-
-try:
-    from bs4 import BeautifulSoup
-    print("✅ BeautifulSoup", flush=True)
-except Exception as e:
-    print(f"❌ BeautifulSoup: {e}", flush=True)
-
-try:
-    from github import Github, Auth
-    print("✅ PyGithub", flush=True)
-except Exception as e:
-    print(f"❌ PyGithub: {e}", flush=True)
-
-print("\n✅ 테스트 완료!", flush=True)
-sys.stdout.flush()
+jobs:
+  auto-post:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 코드 체크아웃
+        uses: actions/checkout@v3
+      
+      - name: Python 3.10 설정
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+      
+      - name: 패키지 설치
+        run: |
+          pip install requests beautifulsoup4 PyGithub
+      
+      - name: 테스트 실행  # ← 이름 변경
+        env:
+          CAFE24_CLIENT_ID: ${{ secrets.CAFE24_CLIENT_ID }}
+          CAFE24_CLIENT_SECRET: ${{ secrets.CAFE24_CLIENT_SECRET }}
+          CAFE24_MALL_ID: ${{ secrets.CAFE24_MALL_ID }}
+          CAFE24_REFRESH_TOKEN: ${{ secrets.CAFE24_REFRESH_TOKEN }}
+          PA_TOKEN: ${{ secrets.PA_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: python -u test_main.py  # ← 파일명 변경
