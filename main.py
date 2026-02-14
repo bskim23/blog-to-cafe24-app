@@ -318,11 +318,11 @@ def upload_image_to_cafe24(access_token, image_data):
         return None
 
 # ============================================================================
-# 5. 카페24 갤러리 게시판에 게시글 업로드 (4가지 패턴 자동 테스트)
+# 5. 카페24 갤러리 게시판에 게시글 업로드 (writer 5가지 패턴)
 # ============================================================================
 def upload_to_cafe24(access_token, title, content, original_link, images):
     """
-    카페24 갤러리 게시판에 업로드 (4가지 payload 패턴 자동 테스트)
+    카페24 갤러리 게시판에 업로드 (writer 5가지 패턴 자동 테스트)
     """
     print("📤 [4/5] 이미지를 카페24에 업로드 시작", flush=True)
     print("-" * 70, flush=True)
@@ -351,7 +351,7 @@ def upload_to_cafe24(access_token, title, content, original_link, images):
     sys.stdout.flush()
     
     # Step 2: 이미지 URL을 HTML로 변환
-    print("📤 [5/5] 게시글 생성 시작 (4가지 패턴 자동 테스트)", flush=True)
+    print("📤 [5/5] 게시글 생성 시작 (writer 5가지 패턴)", flush=True)
     print("-" * 70, flush=True)
     sys.stdout.flush()
     
@@ -371,61 +371,76 @@ def upload_to_cafe24(access_token, title, content, original_link, images):
         "X-Cafe24-Api-Version": "2025-12-01"
     }
     
-    # ✅ 4가지 패턴 정의
-    patterns = [
+    # ✅ writer 5가지 패턴 정의
+    writer_patterns = [
         {
-            "name": "패턴1: shop_no + request",
-            "payload": {
+            "name": "writer = 메디힐리",
+            "request": {
                 "shop_no": 1,
-                "request": {
-                    "title": title,
-                    "content": final_content,
-                    "client_ip": "127.0.0.1"
-                }
+                "writer": "메디힐리",
+                "title": title,
+                "content": final_content,
+                "client_ip": "127.0.0.1",
+                "password": "1234"
             }
         },
         {
-            "name": "패턴2: request만 (shop_no 제거)",
-            "payload": {
-                "request": {
-                    "title": title,
-                    "content": final_content,
-                    "client_ip": "127.0.0.1"
-                }
-            }
-        },
-        {
-            "name": "패턴3: shop_no + requests (복수형 배열)",
-            "payload": {
+            "name": f"writer = {MALL_ID} (계정명)",
+            "request": {
                 "shop_no": 1,
-                "requests": [
-                    {
-                        "title": title,
-                        "content": final_content,
-                        "client_ip": "127.0.0.1"
-                    }
-                ]
+                "writer": MALL_ID,
+                "title": title,
+                "content": final_content,
+                "client_ip": "127.0.0.1",
+                "password": "1234"
             }
         },
         {
-            "name": "패턴4: article 래퍼",
-            "payload": {
-                "article": {
-                    "title": title,
-                    "content": final_content,
-                    "client_ip": "127.0.0.1"
-                }
+            "name": "writer = 관리자",
+            "request": {
+                "shop_no": 1,
+                "writer": "관리자",
+                "title": title,
+                "content": final_content,
+                "client_ip": "127.0.0.1",
+                "password": "1234"
+            }
+        },
+        {
+            "name": 'writer = "" (빈 문자열)',
+            "request": {
+                "shop_no": 1,
+                "writer": "",
+                "title": title,
+                "content": final_content,
+                "client_ip": "127.0.0.1",
+                "password": "1234"
+            }
+        },
+        {
+            "name": "writer 필드 제거",
+            "request": {
+                "shop_no": 1,
+                "title": title,
+                "content": final_content,
+                "client_ip": "127.0.0.1",
+                "password": "1234"
             }
         }
     ]
     
-    # 각 패턴 시도
-    for idx, pattern in enumerate(patterns, 1):
-        print(f"\n   [{idx}/4] {pattern['name']}", flush=True)
+    # 각 writer 패턴 시도
+    for idx, pattern in enumerate(writer_patterns, 1):
+        print(f"\n   [{idx}/5] {pattern['name']}", flush=True)
         sys.stdout.flush()
         
+        # requests 배열로 감싸기
+        payload = {
+            "requests": [pattern["request"]]
+        }
+        
         try:
-            res = requests.post(url, headers=headers, json=pattern['payload'], timeout=30)
+            res = requests.post(url, headers=headers, json=payload, timeout=30)
             
             print(f"          응답 코드: {res.status_code}", flush=True)
             sys.stdout.flush()
@@ -435,14 +450,14 @@ def upload_to_cafe24(access_token, title, content, original_link, images):
                 print(f"🎉 게시글 업로드 성공! ({pattern['name']})", flush=True)
                 print("=" * 70, flush=True)
                 print(f"   📝 제목: {title}", flush=True)
-                print(f"   ✍️  작성자: 메디힐리 (관리자)", flush=True)
+                print(f"   ✍️  작성자: {pattern['request'].get('writer', '자동')}", flush=True)
                 print(f"   🖼️  이미지: {len(image_urls)}개", flush=True)
                 print(f"   🔗 확인: https://{MALL_ID}.cafe24.com/board/gallery/{BOARD_NO}/", flush=True)
                 print("=" * 70, flush=True)
                 sys.stdout.flush()
                 return  # 성공하면 즉시 종료
             else:
-                print(f"          ❌ 실패: {res.text[:150]}", flush=True)
+                print(f"          ❌ 실패: {res.text[:200]}", flush=True)
                 sys.stdout.flush()
                 
         except Exception as e:
@@ -450,7 +465,7 @@ def upload_to_cafe24(access_token, title, content, original_link, images):
             sys.stdout.flush()
     
     # 모든 패턴 실패
-    print(f"\n❌ [ERROR] 모든 패턴 실패", flush=True)
+    print(f"\n❌ [ERROR] 모든 writer 패턴 실패", flush=True)
     sys.stdout.flush()
     sys.exit(1)
 
@@ -459,7 +474,7 @@ def upload_to_cafe24(access_token, title, content, original_link, images):
 # ============================================================================
 def main():
     print("\n" + "=" * 70, flush=True)
-    print("🚀 네이버 → 카페24 자동 포스팅 (게시글 4패턴 테스트)", flush=True)
+    print("🚀 네이버 → 카페24 자동 포스팅 (writer 5패턴)", flush=True)
     print("=" * 70 + "\n", flush=True)
     sys.stdout.flush()
     
@@ -483,7 +498,7 @@ def main():
         # 3. 본문 및 이미지 추출 (Base64 변환)
         content, images = extract_content_and_images(real_url)
         
-        # 4~5. 이미지 업로드 → 게시글 생성 (4패턴 자동 테스트)
+        # 4~5. 이미지 업로드 → 게시글 생성 (writer 5패턴)
         upload_to_cafe24(access_token, title, content, original_link, images)
         
         print("\n✅ 모든 작업 완료!\n", flush=True)
