@@ -252,11 +252,11 @@ def extract_content_and_images(real_url):
         sys.exit(1)
 
 # ============================================================================
-# 4. 카페24 업로드 (GPT 조언 반영)
+# 4. 카페24 업로드 (쿼리 스트링 제거, 헤더로 버전 지정)
 # ============================================================================
 def upload_to_cafe24(access_token, title, content, original_link, attachments):
     """
-    카페24 갤러리 게시판에 업로드 (GPT 조언 반영 - 필수 필드 모두 포함)
+    카페24 갤러리 게시판에 업로드 (쿼리 스트링 제거, 헤더로 버전 지정)
     """
     print("📤 [4/4] 카페24 갤러리 게시판 업로드 시작", flush=True)
     print("-" * 70, flush=True)
@@ -264,12 +264,14 @@ def upload_to_cafe24(access_token, title, content, original_link, attachments):
     
     final_content = f"{content}\n\n<br><br><a href='{original_link}' target='_blank'>📝 원문 보러가기 (이미지 포함)</a>"
     
-    # ✅ GPT 조언: URL에 버전 명시
-    url = f"https://{MALL_ID}.cafe24api.com/api/v2/admin/boards/{BOARD_NO}/articles?version=2025-12-01"
+    # ✅ 수정: 쿼리 스트링 제거
+    url = f"https://{MALL_ID}.cafe24api.com/api/v2/admin/boards/{BOARD_NO}/articles"
     
+    # ✅ 수정: 버전을 헤더로 이동
     headers = {
         "Authorization": f"Bearer {access_token}",
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        "X-Cafe24-Api-Version": "2025-12-01"
     }
     
     # ✅ GPT 조언: 필수 필드 모두 포함, 올바른 필드명 사용
@@ -279,17 +281,16 @@ def upload_to_cafe24(access_token, title, content, original_link, attachments):
             "writer": WRITER_NAME,        # Required!
             "title": title,               # Required!
             "content": final_content,     # Required!
-            "client_ip": "127.0.0.1",     # Required! (누락되었던 필드)
+            "client_ip": "127.0.0.1",     # Required!
             "password": PASSWORD,
-            "notice": "F",                # is_notice → notice
-            "fixed": "F",                 # 새로 추가
-            "secret": "F"                 # is_secret → secret
-            # board_no 제거 (URL에 이미 있음)
-            # attachments 제거 (스펙에 없음)
+            "notice": "F",
+            "fixed": "F",
+            "secret": "F"
         }
     }
     
-    print(f"🔍 [DEBUG] 최소 필수 필드로 시도 (이미지 없음)", flush=True)
+    print(f"🔍 [DEBUG] 필수 필드로 시도 (이미지 없음)", flush=True)
+    print(f"🔍 [DEBUG] URL: {url}", flush=True)
     print(f"🔍 [DEBUG] Payload 미리보기:", flush=True)
     print(f"{json.dumps(payload, ensure_ascii=False, indent=2)[:300]}...", flush=True)
     sys.stdout.flush()
@@ -351,7 +352,7 @@ def main():
         # 3. 본문 및 이미지 추출
         content, attachments = extract_content_and_images(real_url)
         
-        # 4. 카페24 업로드 (GPT 조언 반영)
+        # 4. 카페24 업로드
         upload_to_cafe24(access_token, title, content, original_link, attachments)
         
         print("\n✅ 모든 작업 완료!\n", flush=True)
