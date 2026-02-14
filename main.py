@@ -209,7 +209,7 @@ def extract_content_and_images(real_url):
         sys.stdout.flush()
         
         for idx, img in enumerate(img_tags):
-            if idx >= 5:  # 최대 5개
+            if idx >= 1:  # ⚠️ 테스트용으로 1개만!
                 break
             
             src = img.get('src') or img.get('data-lazy-src') or img.get('data-src')
@@ -237,7 +237,7 @@ def extract_content_and_images(real_url):
         # 본문 텍스트
         text_content = content_area.get_text(separator='\n', strip=True)
         
-        print(f"✅ 총 {len(images)}개 이미지 추출 완료", flush=True)
+        print(f"✅ 총 {len(images)}개 이미지 추출 완료 (테스트용)", flush=True)
         print(f"✅ [3/5] 콘텐츠 추출 완료\n", flush=True)
         sys.stdout.flush()
         
@@ -249,12 +249,11 @@ def extract_content_and_images(real_url):
         sys.exit(1)
 
 # ============================================================================
-# 4. 이미지를 카페24 Products API로 업로드 (GPT 정보 반영)
+# 4. 이미지 업로드 - 8가지 패턴 자동 테스트
 # ============================================================================
-def upload_image_to_cafe24(access_token, image_data, sort_order=1):
+def upload_image_to_cafe24_auto_test(access_token, image_data, sort_order=1):
     """
-    카페24 Products Images API로 이미지 업로드 → 이미지 URL 받기
-    GPT 정보: image 객체로 감싸야 함
+    8가지 payload 패턴을 순차적으로 자동 테스트
     """
     url = f"https://{MALL_ID}.cafe24api.com/api/v2/admin/products/images"
     
@@ -264,168 +263,179 @@ def upload_image_to_cafe24(access_token, image_data, sort_order=1):
         "X-Cafe24-Api-Version": "2025-12-01"
     }
     
-    # ✅ GPT 정보: image 객체로 감싸기
-    payload = {
-        "request": {
-            "image": {
+    # ✅ 8가지 패턴
+    patterns = [
+        {
+            "name": "패턴1: request.image (문자열)",
+            "payload": {
+                "request": {
+                    "image": image_data["base64"]
+                }
+            }
+        },
+        {
+            "name": "패턴2: request.image.image + sort",
+            "payload": {
+                "request": {
+                    "image": {
+                        "image": image_data["base64"],
+                        "sort": sort_order
+                    }
+                }
+            }
+        },
+        {
+            "name": "패턴3: image (직접, 문자열)",
+            "payload": {
+                "image": image_data["base64"]
+            }
+        },
+        {
+            "name": "패턴4: image.image (객체)",
+            "payload": {
+                "image": {
+                    "image": image_data["base64"]
+                }
+            }
+        },
+        {
+            "name": "패턴5: request.images (배열)",
+            "payload": {
+                "request": {
+                    "images": [
+                        {
+                            "image": image_data["base64"],
+                            "sort": sort_order
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "name": "패턴6: shop_no + request.image",
+            "payload": {
+                "shop_no": 1,
+                "request": {
+                    "image": image_data["base64"]
+                }
+            }
+        },
+        {
+            "name": "패턴7: image + filename",
+            "payload": {
                 "image": image_data["base64"],
-                "sort": sort_order
+                "filename": image_data["filename"]
+            }
+        },
+        {
+            "name": "패턴8: request.image + filename",
+            "payload": {
+                "request": {
+                    "image": image_data["base64"],
+                    "filename": image_data["filename"]
+                }
             }
         }
-    }
+    ]
     
-    print(f"      🔍 Payload 구조: request.image.image (GPT 정보)", flush=True)
+    print(f"\n      🔍 총 {len(patterns)}가지 패턴 자동 테스트 시작", flush=True)
+    print("      " + "="*60, flush=True)
     sys.stdout.flush()
     
-    try:
-        res = requests.post(url, headers=headers, json=payload, timeout=30)
-        
-        print(f"      🔍 업로드 응답: {res.status_code}", flush=True)
-        print(f"      🔍 응답 본문: {res.text[:200]}", flush=True)
+    for idx, pattern in enumerate(patterns, 1):
+        print(f"\n      [{idx}/{len(patterns)}] {pattern['name']}", flush=True)
         sys.stdout.flush()
         
-        if res.status_code in [200, 201]:
-            result = res.json()
+        try:
+            res = requests.post(url, headers=headers, json=pattern['payload'], timeout=30)
             
-            # 이미지 URL 추출
-            image_url = None
+            print(f"          응답 코드: {res.status_code}", flush=True)
             
-            # 여러 가능한 응답 구조 시도
-            if 'image' in result:
-                if isinstance(result['image'], dict):
-                    image_url = result['image'].get('url') or result['image'].get('image_url')
-                elif isinstance(result['image'], str):
-                    image_url = result['image']
-            elif 'url' in result:
-                image_url = result['url']
-            elif 'request' in result and 'image' in result['request']:
-                image_url = result['request']['image'].get('url')
-            
-            if image_url:
-                print(f"      ✅ 이미지 URL: {image_url[:60]}...", flush=True)
+            if res.status_code in [200, 201]:
+                print(f"          ✅ 성공!", flush=True)
+                print(f"          응답: {res.text[:200]}", flush=True)
                 sys.stdout.flush()
-                return image_url
+                
+                # URL 추출
+                result = res.json()
+                image_url = None
+                
+                if 'image' in result:
+                    if isinstance(result['image'], dict):
+                        image_url = result['image'].get('url') or result['image'].get('image_url')
+                    elif isinstance(result['image'], str):
+                        image_url = result['image']
+                elif 'url' in result:
+                    image_url = result['url']
+                
+                if image_url:
+                    print(f"\n      🎉 성공한 패턴: {pattern['name']}", flush=True)
+                    print(f"      이미지 URL: {image_url}", flush=True)
+                    sys.stdout.flush()
+                    return image_url
+                else:
+                    print(f"          ⚠️  URL 없음: {result}", flush=True)
+                    
             else:
-                print(f"      ⚠️  이미지 URL 없음, 전체 응답:", flush=True)
-                print(f"      {json.dumps(result, ensure_ascii=False, indent=2)}", flush=True)
-                sys.stdout.flush()
-                return None
-        else:
-            print(f"      ❌ 업로드 실패: {res.text}", flush=True)
-            sys.stdout.flush()
-            return None
-            
-    except Exception as e:
-        print(f"      ❌ 업로드 에러: {e}", flush=True)
+                print(f"          ❌ 실패: {res.text[:150]}", flush=True)
+                
+        except Exception as e:
+            print(f"          ❌ 에러: {e}", flush=True)
+        
         sys.stdout.flush()
-        return None
+    
+    print(f"\n      ❌ 모든 패턴 실패", flush=True)
+    sys.stdout.flush()
+    return None
 
 # ============================================================================
 # 5. 카페24 갤러리 게시판에 게시글 업로드
 # ============================================================================
 def upload_to_cafe24(access_token, title, content, original_link, images):
     """
-    카페24 갤러리 게시판에 업로드 (이미지 URL 방식)
+    카페24 갤러리 게시판에 업로드
     """
-    print("📤 [4/5] 이미지를 카페24에 업로드 시작", flush=True)
+    print("📤 [4/5] 이미지 자동 패턴 테스트 업로드 시작", flush=True)
     print("-" * 70, flush=True)
     sys.stdout.flush()
     
     if not images:
-        print("❌ [ERROR] 갤러리 게시판은 이미지가 필수입니다.", flush=True)
+        print("❌ [ERROR] 이미지가 없습니다.", flush=True)
         sys.exit(1)
     
-    # Step 1: 각 이미지를 Products Images API로 업로드
+    # 각 이미지를 8가지 패턴으로 자동 테스트
     image_urls = []
     
     for idx, img_data in enumerate(images, 1):
-        print(f"   🔄 이미지 {idx}/{len(images)} 업로드 중...", flush=True)
+        print(f"   🔄 이미지 {idx}/{len(images)} 업로드 (자동 패턴 테스트)...", flush=True)
         sys.stdout.flush()
         
-        url = upload_image_to_cafe24(access_token, img_data, sort_order=idx)
+        url = upload_image_to_cafe24_auto_test(access_token, img_data, sort_order=idx)
         if url:
             image_urls.append(url)
+            break  # 첫 번째 성공하면 중단
     
     if not image_urls:
-        print("❌ [ERROR] 모든 이미지 업로드 실패", flush=True)
+        print("❌ [ERROR] 모든 패턴으로 업로드 실패", flush=True)
         sys.exit(1)
     
-    print(f"✅ {len(image_urls)}개 이미지 업로드 완료\n", flush=True)
+    print(f"\n✅ 성공! 이미지 업로드 완료", flush=True)
+    print(f"   성공한 이미지 URL: {image_urls[0]}", flush=True)
     sys.stdout.flush()
     
-    # Step 2: 이미지 URL을 HTML로 변환
-    print("📤 [5/5] 게시글 생성 시작", flush=True)
-    print("-" * 70, flush=True)
+    print("\n🎉 패턴 발견! 이제 실제 게시글 생성은 스킵합니다.", flush=True)
+    print("   성공한 패턴으로 전체 코드를 수정하세요.", flush=True)
     sys.stdout.flush()
-    
-    # ✅ 이미지 HTML 생성
-    image_html = ""
-    for idx, img_url in enumerate(image_urls, 1):
-        image_html += f'<img src="{img_url}" alt="이미지 {idx}" style="max-width:100%;"><br>\n'
-    
-    # 최종 content
-    final_content = f"{image_html}<br><br>{content}<br><br><a href='{original_link}' target='_blank'>📝 원문 보러가기</a>"
-    
-    url = f"https://{MALL_ID}.cafe24api.com/api/v2/admin/boards/{BOARD_NO}/articles"
-    
-    headers = {
-        "Authorization": f"Bearer {access_token}",
-        "Content-Type": "application/json",
-        "X-Cafe24-Api-Version": "2025-12-01"
-    }
-    
-    # ✅ 게시글 생성 (이미지는 content HTML에 포함)
-    payload = {
-        "shop_no": 1,
-        "request": {
-            "title": title,
-            "content": final_content,
-            "client_ip": "127.0.0.1"
-        }
-    }
-    
-    print(f"🔍 [DEBUG] Content 길이: {len(final_content):,} 문자", flush=True)
-    print(f"🔍 [DEBUG] 이미지 {len(image_urls)}개 HTML 삽입", flush=True)
-    sys.stdout.flush()
-    
-    try:
-        res = requests.post(url, headers=headers, json=payload, timeout=30)
-        
-        print(f"\n🔍 [DEBUG] 응답 코드: {res.status_code}", flush=True)
-        print(f"🔍 [DEBUG] 응답: {res.text[:500]}", flush=True)
-        sys.stdout.flush()
-        
-        if res.status_code == 201:
-            print("\n" + "=" * 70, flush=True)
-            print("🎉 게시글 업로드 성공!", flush=True)
-            print("=" * 70, flush=True)
-            print(f"   📝 제목: {title}", flush=True)
-            print(f"   ✍️  작성자: 메디힐리 (관리자)", flush=True)
-            print(f"   🖼️  이미지: {len(image_urls)}개", flush=True)
-            print(f"   🔗 확인: https://{MALL_ID}.cafe24.com/board/gallery/{BOARD_NO}/", flush=True)
-            print("=" * 70, flush=True)
-            sys.stdout.flush()
-        else:
-            print(f"\n❌ [ERROR] 게시글 생성 실패 (HTTP {res.status_code})", flush=True)
-            print(f"   전체 응답: {res.text}", flush=True)
-            sys.stdout.flush()
-            sys.exit(1)
-            
-    except Exception as e:
-        print(f"❌ [ERROR] 게시글 생성 에러: {e}", flush=True)
-        sys.stdout.flush()
-        sys.exit(1)
 
 # ============================================================================
 # 메인 실행
 # ============================================================================
 def main():
     print("\n" + "=" * 70, flush=True)
-    print("🚀 네이버 → 카페24 자동 포스팅 (GPT 정보 반영)", flush=True)
+    print("🚀 카페24 이미지 API 자동 패턴 테스트", flush=True)
     print("=" * 70 + "\n", flush=True)
     sys.stdout.flush()
     
-    # 환경 변수 체크
     required_vars = [MALL_ID, CLIENT_ID, CLIENT_SECRET, REFRESH_TOKEN]
     
     if not all(required_vars):
@@ -442,13 +452,13 @@ def main():
         # 2. 최신 글 가져오기
         title, original_link, real_url = fetch_latest_post()
         
-        # 3. 본문 및 이미지 추출 (Base64 변환)
+        # 3. 본문 및 이미지 추출 (1개만!)
         content, images = extract_content_and_images(real_url)
         
-        # 4~5. 이미지 업로드 → 게시글 생성
+        # 4. 자동 패턴 테스트
         upload_to_cafe24(access_token, title, content, original_link, images)
         
-        print("\n✅ 모든 작업 완료!\n", flush=True)
+        print("\n✅ 테스트 완료!\n", flush=True)
         sys.stdout.flush()
         
     except Exception as e:
