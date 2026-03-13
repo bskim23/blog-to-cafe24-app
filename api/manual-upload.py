@@ -20,6 +20,8 @@ USER_AGENT = (
     "AppleWebKit/537.36 (KHTML, like Gecko) "
     "Chrome/120.0.0.0 Safari/537.36"
 )
+
+# 원본 main.py 기준
 MIN_BYTES_KEEP = 25_000
 BASE_FONT_SIZE = 19
 API_VERSION = "2025-12-01"
@@ -218,6 +220,7 @@ def normalize_naver_url(url):
     raise ValueError("네이버 블로그 글 주소 형식을 인식하지 못했습니다.")
 
 
+# 원본 main.py 이미지 처리 함수 그대로 복원
 def download_and_upload(access_token, src, referer):
     try:
         clean_src = src.split('?')[0] + "?type=w2000" if 'pstatic.net' in src else src
@@ -244,6 +247,7 @@ def download_and_upload(access_token, src, referer):
     return None
 
 
+# 원본 main.py 순회 방식 그대로 복원
 def parse_naver_post(url, access_token):
     real_url = normalize_naver_url(url)
 
@@ -271,7 +275,6 @@ def parse_naver_post(url, access_token):
             continue
 
         img_tag = el.find('img') if el.name != 'img' else el
-
         if img_tag and ((el.get('class') and any('se-image' in c for c in el.get('class'))) or el.name == 'img'):
             src = img_tag.get('data-src') or img_tag.get('src')
             if src and not src.endswith('.svg'):
@@ -281,10 +284,8 @@ def parse_naver_post(url, access_token):
                         first_valid_image = uploaded_path
                     html_parts.append(
                         f'<div style="margin:35px 0; text-align:center;">'
-                        f'<img src="{uploaded_path}" style="max-width:100%; height:auto; border-radius:12px;">'
-                        f'</div>'
+                        f'<img src="{uploaded_path}" style="max-width:100%; height:auto; border-radius:12px;"></div>'
                     )
-
             for c in el.find_all():
                 seen.add(c)
             seen.add(el)
