@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { spawn } from "child_process";
 import path from "path";
 
+export const runtime = "nodejs";
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
@@ -28,6 +30,7 @@ export async function POST(req: NextRequest) {
       code: number | null;
       stdout: string;
       stderr: string;
+      spawnError?: string;
     }>((resolve) => {
       const child = spawn("python3", [scriptPath, url, String(boardNo)], {
         cwd: process.cwd(),
@@ -36,6 +39,7 @@ export async function POST(req: NextRequest) {
 
       let stdout = "";
       let stderr = "";
+      let spawnError = "";
 
       child.stdout.on("data", (data) => {
         stdout += data.toString();
@@ -45,29 +49,25 @@ export async function POST(req: NextRequest) {
         stderr += data.toString();
       });
 
+      child.on("error", (err) => {
+        spawnError = err.message;
+      });
+
       child.on("close", (code) => {
-        resolve({ code, stdout, stderr });
+        resolve({ code, stdout, stderr, spawnError });
       });
     });
 
-    const raw = (result.stdout || result.stderr || "").trim();
-
-    try {
-      const parsed = JSON.parse(raw);
-      if (!parsed.success) {
-        return NextResponse.json(parsed, { status: 500 });
-      }
-      return NextResponse.json(parsed);
-    } catch {
-      return NextResponse.json(
-        {
-          success: false,
-          message: "Python 실행 결과를 해석하지 못했습니다.",
-          raw,
-        },
-        { status: 500 }
-      );
-    }
+    return NextResponse.json({
+      success: false,
+      debug: true,
+      code: result.code,
+      stdout: result.stdout,
+      stderr: result.stderr,
+      spawnError: result.spawnError || "",
+      scriptPath,
+      cwd: process.cwd(),
+    });
   } catch (error) {
     return NextResponse.json(
       {
