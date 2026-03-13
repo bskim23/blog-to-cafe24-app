@@ -7,6 +7,9 @@ import requests
 from bs4 import BeautifulSoup
 
 
+# ============================================================================
+# 설정
+# ============================================================================
 MALL_ID = os.environ.get("CAFE24_MALL_ID")
 CLIENT_ID = os.environ.get("CAFE24_CLIENT_ID")
 CLIENT_SECRET = os.environ.get("CAFE24_CLIENT_SECRET")
@@ -21,12 +24,14 @@ USER_AGENT = (
     "Chrome/120.0.0.0 Safari/537.36"
 )
 
-# 원본 main.py 기준
 MIN_BYTES_KEEP = 25_000
 BASE_FONT_SIZE = 19
 API_VERSION = "2025-12-01"
 
 
+# ============================================================================
+# 디버그 보조
+# ============================================================================
 def mask_value(value):
     if not value:
         return {
@@ -61,6 +66,9 @@ def safe_json_or_text(res):
         return res.text
 
 
+# ============================================================================
+# 환경변수 체크
+# ============================================================================
 def validate_env():
     required = {
         "CAFE24_MALL_ID": MALL_ID,
@@ -82,6 +90,9 @@ def validate_env():
         )
 
 
+# ============================================================================
+# Supabase refresh token 저장소
+# ============================================================================
 def supabase_headers():
     return {
         "apikey": SUPABASE_SERVICE_ROLE_KEY,
@@ -138,6 +149,9 @@ def save_refresh_token(new_token):
     res.raise_for_status()
 
 
+# ============================================================================
+# 카페24 토큰 갱신
+# ============================================================================
 def refresh_access_token():
     refresh_token, token_source = load_refresh_token()
 
@@ -195,6 +209,9 @@ def refresh_access_token():
     return access_token
 
 
+# ============================================================================
+# 네이버 URL 정규화
+# ============================================================================
 def normalize_naver_url(url):
     url = url.strip()
     if not url:
@@ -220,97 +237,127 @@ def normalize_naver_url(url):
     raise ValueError("네이버 블로그 글 주소 형식을 인식하지 못했습니다.")
 
 
-# 원본 main.py 이미지 처리 함수 그대로 복원
-def download_and_upload(access_token, src, referer):
-    try:
-        clean_src = src.split('?')[0] + "?type=w2000" if 'pstatic.net' in src else src
-        img_res = requests.get(
-            clean_src,
-            headers={"User-Agent": USER_AGENT, "Referer": referer},
-            timeout=20
-        )
-        if img_res.status_code == 200 and len(img_res.content) > MIN_BYTES_KEEP:
-            b64 = base64.b64encode(img_res.content).decode()
-            up_url = f"https://{MALL_ID}.cafe24api.com/api/v2/admin/products/images"
-            headers = {
-                "Authorization": f"Bearer {access_token}",
-                "Content-Type": "application/json",
-                "X-Cafe24-Api-Version": "2025-12-01"
-            }
-            payload = {"requests": [{"image": b64}]}
-            up_res = requests.post(up_url, headers=headers, json=payload, timeout=30)
-            if up_res.status_code in [200, 201]:
-                img_data = up_res.json()["images"][0]
-                return img_data.get("url") or img_data.get("path")
-    except Exception:
-        return None
-    return None
+# ============================================================================
+# 제목 추출
+# ============================================================================
+def extract_title(real_url):
+    res = requests.get(real_url, headers={"User-Agent": USER_AGENT}, timeout=25)
+    res.raise_for_status()
 
-
-# 원본 main.py 순회 방식 그대로 복원
-def parse_naver_post(url, access_token):
-    real_url = normalize_naver_url(url)
-
-    soup = BeautifulSoup(
-        requests.get(real_url, headers={"User-Agent": USER_AGENT}).text,
-        "html.parser"
-    )
-
+    soup = BeautifulSoup(res.text, "html.parser")
     title_el = soup.select_one(".se-title-text span") or soup.select_one(".pcol1 .title")
     if not title_el:
         raise ValueError("제목을 찾지 못했습니다.")
 
-    title = title_el.get_text(strip=True)
+    return title_el.get_text(strip=True)
 
+
+# ============================================================================
+# 원본 성공 코드의 이미지 처리 로직 복원
+# ============================================================================
+def download_image_as_b64(url, referer):
+    headers = {
+        "User-Agent": USER_AGENT,
+        "Referer": referer,
+    }
+
+    try:
+        if "pstatic.net" in url:
+            url = url.split("?")[0] + "?type=w2000"
+
+        r = requests.get(url, headers=headers, timeout=20)
+
+        if r.status_code == 200 and len(r.content) > MIN_BYTES_KEEP:
+            return base64.b64encode(r.content).decode()
+
+    except Exception:
+        return None
+
+    return None
+
+
+def upload_to_cafe24_img(access_token, b64):
+    url = f"https://{MALL_ID}.cafe24api.com/api/v2/admin/products/images"
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json",
+        "X-Cafe24-Api-Version": API_VERSION,
+    }
+    payload = {"requests": [{"image": b64}]}
+
+    res = requests.post(url, headers=headers, json=payload, timeout=30)
+
+    if res.status_code in [200, 201]:
+        return res.json()["images"][0].get("url")
+
+    return None
+
+
+# ============================================================================
+# 원본 성공 코드의 본문 조립 로직 복원
+# ============================================================================
+def build_final_content(access_token, real_url):
+    res = requests.get(real_url, headers={"User-Agent": USER_AGENT}, timeout=25)
+    res.raise_for_status()
+
+    soup = BeautifulSoup(res.text, "html.parser")
     content_area = soup.select_one(".se-main-container")
+
     if not content_area:
         raise ValueError("본문 영역을 찾지 못했습니다. 비공개 글이거나 구조가 다를 수 있습니다.")
 
-    html_parts = [f'<div style="font-size:{BASE_FONT_SIZE}px; line-height:1.8; color:#333; word-break:keep-all;">']
-    first_valid_image = None
+    html_parts = [
+        f'<div style="font-size:{BASE_FONT_SIZE}px; line-height:1.8; color:#333; word-break:keep-all;">'
+    ]
+    first_img_url = None
     seen = set()
 
     for el in content_area.find_all(recursive=True):
         if el in seen:
             continue
 
-        img_tag = el.find('img') if el.name != 'img' else el
-        if img_tag and ((el.get('class') and any('se-image' in c for c in el.get('class'))) or el.name == 'img'):
-            src = img_tag.get('data-src') or img_tag.get('src')
-            if src and not src.endswith('.svg'):
-                uploaded_path = download_and_upload(access_token, src, real_url)
-                if uploaded_path:
-                    if not first_valid_image:
-                        first_valid_image = uploaded_path
-                    html_parts.append(
-                        f'<div style="margin:35px 0; text-align:center;">'
-                        f'<img src="{uploaded_path}" style="max-width:100%; height:auto; border-radius:12px;"></div>'
-                    )
-            for c in el.find_all():
-                seen.add(c)
+        # 원본 성공 코드 기준
+        is_img_comp = "se-image" in el.get("class", []) or el.name == "img"
+
+        if is_img_comp and el.name != "div":
+            img_tag = el if el.name == "img" else el.find("img")
+
+            if img_tag:
+                src = img_tag.get("data-src") or img_tag.get("src")
+
+                if src and not src.endswith(".svg"):
+                    b64 = download_image_as_b64(src, real_url)
+
+                    if b64:
+                        up_url = upload_to_cafe24_img(access_token, b64)
+
+                        if up_url:
+                            if not first_img_url:
+                                first_img_url = up_url
+
+                            html_parts.append(
+                                f'<div style="margin:30px 0; text-align:center;">'
+                                f'<img src="{up_url}" style="max-width:100%; height:auto; border-radius:10px;"></div>'
+                            )
+
+                for child in el.find_all():
+                    seen.add(child)
+                seen.add(el)
+
+        elif "se-text-paragraph" in el.get("class", []):
+            raw_html = str(el)
+            clean_html = re.sub(r'class="[^"]*"', "", raw_html)
+            clean_html = re.sub(r'font-size:[^;"]*;?', "", clean_html)
+            html_parts.append(f'<div style="margin-bottom:15px;">{clean_html}</div>')
             seen.add(el)
 
-        elif el.get('class') and 'se-text-paragraph' in el.get('class'):
-            inner_html = re.sub(r'class="[^"]*"', '', str(el))
-            inner_html = re.sub(r'font-size:[^;"]*;?', '', inner_html)
-            html_parts.append(f'<div style="margin-bottom:18px;">{inner_html}</div>')
-            seen.add(el)
-
-    html_parts.append(
-        f'<div style="margin-top:32px; font-size:14px; color:#666;">'
-        f'원문: <a href="{real_url}" target="_blank">네이버 블로그 원문 보기</a>'
-        f'</div>'
-    )
     html_parts.append("</div>")
-
-    return {
-        "title": title,
-        "content": "\n".join(html_parts),
-        "thumbnail": first_valid_image,
-        "source_url": real_url,
-    }
+    return "\n".join(html_parts), first_img_url
 
 
+# ============================================================================
+# 게시글 업로드
+# ============================================================================
 def upload_article(access_token, board_no, title, content, thumbnail):
     payload = {
         "requests": [
@@ -326,7 +373,12 @@ def upload_article(access_token, board_no, title, content, thumbnail):
     }
 
     if thumbnail:
-        payload["requests"][0]["attach_file_urls"] = [{"name": "thumb.jpg", "url": thumbnail}]
+        payload["requests"][0]["attach_file_urls"] = [
+            {
+                "name": "thumbnail.jpg",
+                "url": thumbnail,
+            }
+        ]
 
     res = requests.post(
         f"https://{MALL_ID}.cafe24api.com/api/v2/admin/boards/{board_no}/articles",
@@ -342,6 +394,9 @@ def upload_article(access_token, board_no, title, content, thumbnail):
     return res.json()
 
 
+# ============================================================================
+# HTTP Handler
+# ============================================================================
 class handler(BaseHTTPRequestHandler):
     def _send_json(self, status_code, data):
         body = json.dumps(data, ensure_ascii=False).encode("utf-8")
@@ -380,25 +435,29 @@ class handler(BaseHTTPRequestHandler):
                 return
 
             access_token = refresh_access_token()
-            parsed = parse_naver_post(url, access_token)
+            real_url = normalize_naver_url(url)
+            title = extract_title(real_url)
+            final_html, thumb_url = build_final_content(access_token, real_url)
+
             result = upload_article(
                 access_token=access_token,
                 board_no=board_no,
-                title=parsed["title"],
-                content=parsed["content"],
-                thumbnail=parsed["thumbnail"],
+                title=title,
+                content=final_html,
+                thumbnail=thumb_url,
             )
 
             self._send_json(
                 200,
                 {
                     "success": True,
-                    "title": parsed["title"],
+                    "title": title,
                     "boardNo": board_no,
-                    "sourceUrl": parsed["source_url"],
+                    "sourceUrl": real_url,
                     "result": result,
                 },
             )
+
         except ValueError as e:
             message = str(e)
             try:
@@ -406,6 +465,7 @@ class handler(BaseHTTPRequestHandler):
                 self._send_json(400, {"success": False, **parsed})
             except Exception:
                 self._send_json(400, {"success": False, "message": message})
+
         except requests.HTTPError as e:
             detail = ""
             try:
@@ -424,5 +484,6 @@ class handler(BaseHTTPRequestHandler):
                     "detail": detail,
                 },
             )
+
         except Exception as e:
             self._send_json(500, {"success": False, "message": str(e)})
