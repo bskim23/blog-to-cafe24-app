@@ -8,6 +8,8 @@ type UploadResult = {
   title?: string;
   sourceUrl?: string;
   boardNo?: number;
+  detail?: string;
+  result?: unknown;
   raw?: string;
 };
 
@@ -22,7 +24,9 @@ export default function Home() {
     setResult(null);
 
     try {
-      const res = await fetch("/api/manual-upload", {
+      const apiUrl = new URL("/api/manual-upload", window.location.origin).toString();
+
+      const res = await fetch(apiUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -33,12 +37,40 @@ export default function Home() {
         }),
       });
 
-      const data = (await res.json()) as UploadResult;
-      setResult(data);
+      const rawText = await res.text();
+
+      let parsed: UploadResult | null = null;
+      try {
+        parsed = JSON.parse(rawText) as UploadResult;
+      } catch {
+        parsed = null;
+      }
+
+      if (parsed) {
+        setResult({
+          ...parsed,
+          raw: rawText,
+        });
+      } else {
+        setResult({
+          success: false,
+          message: `HTTP ${res.status}`,
+          raw: rawText,
+        });
+      }
     } catch (error) {
+      const err = error as Error;
       setResult({
         success: false,
-        message: error instanceof Error ? error.message : "요청 중 오류가 발생했습니다.",
+        message: `${err.name}: ${err.message}`,
+        raw: JSON.stringify(
+          {
+            origin: typeof window !== "undefined" ? window.location.origin : "",
+            href: typeof window !== "undefined" ? window.location.href : "",
+          },
+          null,
+          2
+        ),
       });
     } finally {
       setLoading(false);
@@ -120,7 +152,12 @@ export default function Home() {
                   <div className="break-all">원문 주소: {result.sourceUrl}</div>
                 )}
                 {result.message && <div className="mt-2">메시지: {result.message}</div>}
-                {result.raw && (
+                {result.detail && (
+                  <pre className="mt-3 overflow-x-auto whitespace-pre-wrap rounded-xl bg-white/70 p-3 text-xs">
+                    {result.detail}
+                  </pre>
+                )}
+                {!result.success && result.raw && !result.detail && (
                   <pre className="mt-3 overflow-x-auto whitespace-pre-wrap rounded-xl bg-white/70 p-3 text-xs">
                     {result.raw}
                   </pre>
