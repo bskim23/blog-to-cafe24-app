@@ -25,6 +25,40 @@ BASE_FONT_SIZE = 19
 API_VERSION = "2025-12-01"
 
 
+def mask_value(value):
+    if not value:
+        return {
+            "present": False,
+            "length": 0,
+            "tail": "",
+        }
+
+    text = str(value)
+    return {
+        "present": True,
+        "length": len(text),
+        "tail": text[-4:] if len(text) >= 4 else text,
+    }
+
+
+def get_env_debug():
+    return {
+        "CAFE24_MALL_ID": mask_value(MALL_ID),
+        "CAFE24_CLIENT_ID": mask_value(CLIENT_ID),
+        "CAFE24_CLIENT_SECRET": mask_value(CLIENT_SECRET),
+        "CAFE24_REFRESH_TOKEN": mask_value(BOOTSTRAP_REFRESH_TOKEN),
+        "SUPABASE_URL": mask_value(SUPABASE_URL),
+        "SUPABASE_SERVICE_ROLE_KEY": mask_value(SUPABASE_SERVICE_ROLE_KEY),
+    }
+
+
+def safe_json_or_text(res):
+    try:
+        return res.json()
+    except Exception:
+        return res.text
+
+
 def validate_env():
     required = {
         "CAFE24_MALL_ID": MALL_ID,
@@ -35,7 +69,15 @@ def validate_env():
     }
     missing = [key for key, value in required.items() if not value]
     if missing:
-        raise ValueError(f"필수 환경변수가 없습니다: {', '.join(missing)}")
+        raise ValueError(
+            json.dumps(
+                {
+                    "message": f"필수 환경변수가 없습니다: {', '.join(missing)}",
+                    "env_debug": get_env_debug(),
+                },
+                ensure_ascii=False,
+            )
+        )
 
 
 def supabase_headers():
@@ -46,7 +88,7 @@ def supabase_headers():
     }
 
 
-def load_refresh_token() -> str:
+def load_refresh_token():
     validate_env()
 
     url = (
@@ -60,15 +102,24 @@ def load_refresh_token() -> str:
     if data and isinstance(data, list) and len(data) > 0:
         token = data[0].get("value")
         if token:
-            return token
+            return token, "supabase"
 
     if BOOTSTRAP_REFRESH_TOKEN:
-        return BOOTSTRAP_REFRESH_TOKEN
+        return BOOTSTRAP_REFRESH_TOKEN, "vercel_env"
 
-    raise ValueError("사용 가능한 refresh token이 없습니다.")
+    raise ValueError(
+        json.dumps(
+            {
+                "message": "사용 가능한 refresh token이 없습니다.",
+                "env_debug": get_env_debug(),
+                "token_source": "none",
+            },
+            ensure_ascii=False,
+        )
+    )
 
 
-def save_refresh_token(new_token: str):
+def save_refresh_token(new_token):
     if not new_token:
         return
 
@@ -85,8 +136,8 @@ def save_refresh_token(new_token: str):
     res.raise_for_status()
 
 
-def refresh_access_token() -> str:
-    refresh_token = load_refresh_token()
+def refresh_access_token():
+    refresh_token, token_source = load_refresh_token()
 
     url = f"https://{MALL_ID}.cafe24api.com/api/v2/oauth/token"
     auth_str = f"{CLIENT_ID}:{CLIENT_SECRET}"
@@ -104,12 +155,36 @@ def refresh_access_token() -> str:
         },
         timeout=20,
     )
-    res.raise_for_status()
+
+    if res.status_code >= 400:
+        raise requests.HTTPError(
+            json.dumps(
+                {
+                    "message": "카페24 토큰 재발급 실패",
+                    "status_code": res.status_code,
+                    "token_source": token_source,
+                    "env_debug": get_env_debug(),
+                    "cafe24_response": safe_json_or_text(res),
+                },
+                ensure_ascii=False,
+            ),
+            response=res,
+        )
 
     data = res.json()
     access_token = data.get("access_token")
     if not access_token:
-        raise ValueError("카페24 access_token을 받지 못했습니다.")
+        raise ValueError(
+            json.dumps(
+                {
+                    "message": "카페24 access_token을 받지 못했습니다.",
+                    "token_source": token_source,
+                    "env_debug": get_env_debug(),
+                    "token_response_keys": list(data.keys()),
+                },
+                ensure_ascii=False,
+            )
+        )
 
     rotated_refresh_token = data.get("refresh_token")
     if rotated_refresh_token and rotated_refresh_token != refresh_token:
@@ -118,7 +193,7 @@ def refresh_access_token() -> str:
     return access_token
 
 
-def normalize_naver_url(url: str) -> str:
+def normalize_naver_url(url):
     url = url.strip()
     if not url:
         raise ValueError("블로그 주소가 비어 있습니다.")
@@ -143,7 +218,7 @@ def normalize_naver_url(url: str) -> str:
     raise ValueError("네이버 블로그 글 주소 형식을 인식하지 못했습니다.")
 
 
-def download_and_upload_image(access_token: str, src: str, referer: str):
+def download_and_upload_image(access_token, src, referer):
     try:
         clean_src = src.split("?")[0] + "?type=w2000" if "pstatic.net" in src else src
         img_res = requests.get(
@@ -175,7 +250,7 @@ def download_and_upload_image(access_token: str, src: str, referer: str):
         return None
 
 
-def parse_naver_post(url: str, access_token: str):
+def parse_naver_post(url, access_token):
     real_url = normalize_naver_url(url)
 
     res = requests.get(real_url, headers={"User-Agent": USER_AGENT}, timeout=20)
@@ -245,7 +320,7 @@ def parse_naver_post(url: str, access_token: str):
     }
 
 
-def upload_article(access_token: str, board_no: int, title: str, content: str, thumbnail: str | None):
+def upload_article(access_token, board_no, title, content, thumbnail):
     payload = {
         "requests": [
             {
@@ -277,7 +352,7 @@ def upload_article(access_token: str, board_no: int, title: str, content: str, t
 
 
 class handler(BaseHTTPRequestHandler):
-    def _send_json(self, status_code: int, data: dict):
+    def _send_json(self, status_code, data):
         body = json.dumps(data, ensure_ascii=False).encode("utf-8")
         self.send_response(status_code)
         self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -285,6 +360,16 @@ class handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(body)
+
+    def do_GET(self):
+        self._send_json(
+            200,
+            {
+                "success": True,
+                "message": "debug",
+                "env_debug": get_env_debug(),
+            },
+        )
 
     def do_POST(self):
         try:
@@ -324,13 +409,21 @@ class handler(BaseHTTPRequestHandler):
                 },
             )
         except ValueError as e:
-            self._send_json(400, {"success": False, "message": str(e)})
+            message = str(e)
+            try:
+                parsed = json.loads(message)
+                self._send_json(400, {"success": False, **parsed})
+            except Exception:
+                self._send_json(400, {"success": False, "message": message})
         except requests.HTTPError as e:
             detail = ""
             try:
-                detail = e.response.text
-            except Exception:
                 detail = str(e)
+            except Exception:
+                try:
+                    detail = e.response.text
+                except Exception:
+                    detail = "HTTPError"
 
             self._send_json(
                 500,
