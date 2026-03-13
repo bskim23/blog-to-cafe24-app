@@ -3,15 +3,15 @@
 import { useState } from "react";
 
 type UploadResult = {
-  success: boolean;
+  success?: boolean;
   message?: string;
   title?: string;
   sourceUrl?: string;
   boardNo?: number;
   detail?: string;
-  result?: unknown;
+  result?: any;
   raw?: string;
-  debug?: unknown;
+  debug?: any;
 };
 
 export default function Home() {
@@ -40,9 +40,9 @@ export default function Home() {
 
       const rawText = await res.text();
 
-      let parsed: UploadResult | null = null;
+      let parsed: any = null;
       try {
-        parsed = JSON.parse(rawText) as UploadResult;
+        parsed = JSON.parse(rawText);
       } catch {
         parsed = null;
       }
@@ -59,11 +59,10 @@ export default function Home() {
           raw: rawText,
         });
       }
-    } catch (error) {
-      const err = error as Error;
+    } catch (error: any) {
       setResult({
         success: false,
-        message: `${err.name}: ${err.message}`,
+        message: `${error?.name || "Error"}: ${error?.message || "Unknown error"}`,
         raw: JSON.stringify(
           {
             origin: typeof window !== "undefined" ? window.location.origin : "",
@@ -147,30 +146,30 @@ export default function Home() {
                   {result.success ? "업로드 성공" : "업로드 실패"}
                 </div>
 
-                {result.title && <div className="mt-2">제목: {result.title}</div>}
-                {result.boardNo && <div>게시판 번호: {result.boardNo}</div>}
-                {result.sourceUrl && (
+                {result.title ? <div className="mt-2">제목: {result.title}</div> : null}
+                {result.boardNo ? <div>게시판 번호: {result.boardNo}</div> : null}
+                {result.sourceUrl ? (
                   <div className="break-all">원문 주소: {result.sourceUrl}</div>
-                )}
-                {result.message && <div className="mt-2">메시지: {result.message}</div>}
+                ) : null}
+                {result.message ? <div className="mt-2">메시지: {result.message}</div> : null}
 
-                {result.detail && (
+                {result.detail ? (
                   <pre className="mt-3 overflow-x-auto whitespace-pre-wrap rounded-xl bg-white/70 p-3 text-xs">
-                    {result.detail}
+                    {String(result.detail)}
                   </pre>
-                )}
+                ) : null}
 
-                {result.debug && (
+                {result.debug ? (
                   <pre className="mt-3 overflow-x-auto whitespace-pre-wrap rounded-xl bg-white/70 p-3 text-xs">
                     {JSON.stringify(result.debug, null, 2)}
                   </pre>
-                )}
+                ) : null}
 
-                {result.raw && !result.detail && !result.debug && (
+                {result.raw && !result.detail && !result.debug ? (
                   <pre className="mt-3 overflow-x-auto whitespace-pre-wrap rounded-xl bg-white/70 p-3 text-xs">
                     {result.raw}
                   </pre>
-                )}
+                ) : null}
               </div>
             )}
           </div>
