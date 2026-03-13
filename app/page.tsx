@@ -5,9 +5,6 @@ import { useState } from "react";
 type UploadResult = {
   success: boolean;
   message?: string;
-  title?: string;
-  sourceUrl?: string;
-  boardNo?: number;
   raw?: string;
 };
 
@@ -22,7 +19,9 @@ export default function Home() {
     setResult(null);
 
     try {
-      const res = await fetch("/api/manual-upload", {
+      const apiUrl = new URL("/api/manual-upload", window.location.origin).toString();
+
+      const res = await fetch(apiUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -33,12 +32,33 @@ export default function Home() {
         }),
       });
 
-      const data = (await res.json()) as UploadResult;
-      setResult(data);
+      const rawText = await res.text();
+
+      let parsed: any = null;
+      try {
+        parsed = JSON.parse(rawText);
+      } catch {
+        parsed = null;
+      }
+
+      setResult({
+        success: !!parsed?.ok || !!parsed?.success,
+        message: parsed?.message || `HTTP ${res.status}`,
+        raw: rawText,
+      });
     } catch (error) {
+      const err = error as Error;
       setResult({
         success: false,
-        message: error instanceof Error ? error.message : "요청 중 오류가 발생했습니다.",
+        message: `${err.name}: ${err.message}`,
+        raw: JSON.stringify(
+          {
+            origin: typeof window !== "undefined" ? window.location.origin : "",
+            href: typeof window !== "undefined" ? window.location.href : "",
+          },
+          null,
+          2
+        ),
       });
     } finally {
       setLoading(false);
@@ -51,10 +71,10 @@ export default function Home() {
         <div className="rounded-3xl bg-white p-8 shadow-sm ring-1 ring-slate-200">
           <div className="mb-8">
             <h1 className="text-3xl font-bold tracking-tight">
-              네이버 블로그 → 카페24 게시판 업로드
+              FEATURE TEST - 네이버 블로그 → 카페24 게시판 업로드
             </h1>
             <p className="mt-3 text-sm leading-6 text-slate-600">
-              블로그 포스팅 주소를 입력하면 해당 글 1건을 카페24 게시판에 바로 업로드합니다.
+              지금은 API 연결 상태를 먼저 확인하는 단계입니다.
             </p>
           </div>
 
@@ -67,7 +87,7 @@ export default function Home() {
                 type="text"
                 value={url}
                 onChange={(e) => setUrl(e.target.value)}
-                placeholder="https://blog.naver.com/... 또는 https://m.blog.naver.com/..."
+                placeholder="https://blog.naver.com/..."
                 className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm outline-none transition focus:border-slate-500"
               />
             </div>
@@ -86,10 +106,10 @@ export default function Home() {
 
             <button
               onClick={handleSubmit}
-              disabled={loading || !url.trim()}
+              disabled={loading}
               className="inline-flex items-center justify-center rounded-2xl bg-slate-900 px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {loading ? "업로드 중..." : "카페24 게시판에 업로드"}
+              {loading ? "확인 중..." : "API 연결 확인"}
             </button>
           </div>
 
@@ -111,14 +131,8 @@ export default function Home() {
                 }`}
               >
                 <div className="font-semibold">
-                  {result.success ? "업로드 성공" : "업로드 실패"}
+                  {result.success ? "호출 성공" : "호출 실패"}
                 </div>
-
-                {result.title && <div className="mt-2">제목: {result.title}</div>}
-                {result.boardNo && <div>게시판 번호: {result.boardNo}</div>}
-                {result.sourceUrl && (
-                  <div className="break-all">원문 주소: {result.sourceUrl}</div>
-                )}
                 {result.message && <div className="mt-2">메시지: {result.message}</div>}
                 {result.raw && (
                   <pre className="mt-3 overflow-x-auto whitespace-pre-wrap rounded-xl bg-white/70 p-3 text-xs">
