@@ -34,12 +34,7 @@ API_VERSION = "2025-12-01"
 # ============================================================================
 def mask_value(value):
     if not value:
-        return {
-            "present": False,
-            "length": 0,
-            "tail": "",
-        }
-
+        return {"present": False, "length": 0, "tail": ""}
     text = str(value)
     return {
         "present": True,
@@ -253,30 +248,39 @@ def extract_title(real_url):
 
 
 # ============================================================================
-# 원본 성공 코드의 이미지 처리 로직 복원
+# 원본 이미지 처리 + 디버그
 # ============================================================================
-def download_image_as_b64(url, referer):
+def download_image_as_b64(url, referer, debug_item):
     headers = {
         "User-Agent": USER_AGENT,
         "Referer": referer,
     }
 
     try:
+        original_url = url
         if "pstatic.net" in url:
             url = url.split("?")[0] + "?type=w2000"
 
+        debug_item["download_original_url"] = original_url
+        debug_item["download_final_url"] = url
+
         r = requests.get(url, headers=headers, timeout=20)
+        debug_item["download_status"] = r.status_code
+        debug_item["download_bytes"] = len(r.content)
 
         if r.status_code == 200 and len(r.content) > MIN_BYTES_KEEP:
+            debug_item["passed_size_filter"] = True
             return base64.b64encode(r.content).decode()
 
-    except Exception:
+        debug_item["passed_size_filter"] = False
         return None
 
-    return None
+    except Exception as e:
+        debug_item["download_exception"] = str(e)
+        return None
 
 
-def upload_to_cafe24_img(access_token, b64):
+def upload_to_cafe24_img(access_token, b64, debug_item):
     url = f"https://{MALL_ID}.cafe24api.com/api/v2/admin/products/images"
     headers = {
         "Authorization": f"Bearer {access_token}",
@@ -285,16 +289,24 @@ def upload_to_cafe24_img(access_token, b64):
     }
     payload = {"requests": [{"image": b64}]}
 
-    res = requests.post(url, headers=headers, json=payload, timeout=30)
+    try:
+        res = requests.post(url, headers=headers, json=payload, timeout=30)
+        debug_item["upload_status"] = res.status_code
+        debug_item["upload_response"] = safe_json_or_text(res)
 
-    if res.status_code in [200, 201]:
-        return res.json()["images"][0].get("url")
+        if res.status_code in [200, 201]:
+            image_url = res.json()["images"][0].get("url")
+            debug_item["uploaded_url"] = image_url
+            return image_url
 
-    return None
+        return None
+    except Exception as e:
+        debug_item["upload_exception"] = str(e)
+        return None
 
 
 # ============================================================================
-# 원본 성공 코드의 본문 조립 로직 복원
+# 원본 본문 조립 + 디버그
 # ============================================================================
 def build_final_content(access_token, real_url):
     res = requests.get(real_url, headers={"User-Agent": USER_AGENT}, timeout=25)
@@ -311,12 +323,12 @@ def build_final_content(access_token, real_url):
     ]
     first_img_url = None
     seen = set()
+    image_debug = []
 
     for el in content_area.find_all(recursive=True):
         if el in seen:
             continue
 
-        # 원본 성공 코드 기준
         is_img_comp = "se-image" in el.get("class", []) or el.name == "img"
 
         if is_img_comp and el.name != "div":
@@ -324,12 +336,17 @@ def build_final_content(access_token, real_url):
 
             if img_tag:
                 src = img_tag.get("data-src") or img_tag.get("src")
+                debug_item = {
+                    "element_name": el.name,
+                    "element_classes": el.get("class", []),
+                    "src": src,
+                }
 
                 if src and not src.endswith(".svg"):
-                    b64 = download_image_as_b64(src, real_url)
+                    b64 = download_image_as_b64(src, real_url, debug_item)
 
                     if b64:
-                        up_url = upload_to_cafe24_img(access_token, b64)
+                        up_url = upload_to_cafe24_img(access_token, b64, debug_item)
 
                         if up_url:
                             if not first_img_url:
@@ -339,6 +356,10 @@ def build_final_content(access_token, real_url):
                                 f'<div style="margin:30px 0; text-align:center;">'
                                 f'<img src="{up_url}" style="max-width:100%; height:auto; border-radius:10px;"></div>'
                             )
+                    image_debug.append(debug_item)
+                else:
+                    debug_item["skipped_reason"] = "no_src_or_svg"
+                    image_debug.append(debug_item)
 
                 for child in el.find_all():
                     seen.add(child)
@@ -352,7 +373,7 @@ def build_final_content(access_token, real_url):
             seen.add(el)
 
     html_parts.append("</div>")
-    return "\n".join(html_parts), first_img_url
+    return "\n".join(html_parts), first_img_url, image_debug
 
 
 # ============================================================================
@@ -437,7 +458,7 @@ class handler(BaseHTTPRequestHandler):
             access_token = refresh_access_token()
             real_url = normalize_naver_url(url)
             title = extract_title(real_url)
-            final_html, thumb_url = build_final_content(access_token, real_url)
+            final_html, thumb_url, image_debug = build_final_content(access_token, real_url)
 
             result = upload_article(
                 access_token=access_token,
@@ -454,6 +475,10 @@ class handler(BaseHTTPRequestHandler):
                     "title": title,
                     "boardNo": board_no,
                     "sourceUrl": real_url,
+                    "debug": {
+                        "thumbnail": thumb_url,
+                        "image_debug": image_debug,
+                    },
                     "result": result,
                 },
             )
