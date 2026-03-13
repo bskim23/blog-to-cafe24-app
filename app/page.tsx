@@ -19,53 +19,63 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<UploadResult | null>(null);
 
-  const handleSubmit = async () => {
-    setLoading(true);
-    setResult(null);
+ const handleSubmit = async () => {
+  setLoading(true);
+  setResult(null);
 
+  try {
+    const apiUrl = new URL("/api/manual-upload", window.location.origin).toString();
+
+    const res = await fetch(apiUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        url,
+        boardNo: Number(boardNo),
+      }),
+    });
+
+    const rawText = await res.text();
+
+    let parsed: UploadResult | null = null;
     try {
-      const res = await fetch("/api/manual-upload", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          url,
-          boardNo: Number(boardNo),
-        }),
+      parsed = JSON.parse(rawText) as UploadResult;
+    } catch {
+      parsed = null;
+    }
+
+    if (parsed) {
+      setResult({
+        ...parsed,
+        raw: rawText,
       });
-
-      const rawText = await res.text();
-
-      let parsed: UploadResult | null = null;
-      try {
-        parsed = JSON.parse(rawText) as UploadResult;
-      } catch {
-        parsed = null;
-      }
-
-      if (parsed) {
-        setResult({
-          ...parsed,
-          raw: rawText,
-        });
-      } else {
-        setResult({
-          success: false,
-          message: `HTTP ${res.status}`,
-          raw: rawText,
-        });
-      }
-    } catch (error) {
-      const err = error as Error;
+    } else {
       setResult({
         success: false,
-        message: `${err.name}: ${err.message}`,
+        message: `HTTP ${res.status}`,
+        raw: rawText,
       });
-    } finally {
-      setLoading(false);
     }
-  };
+  } catch (error) {
+    const err = error as Error;
+    setResult({
+      success: false,
+      message: `${err.name}: ${err.message}`,
+      raw: JSON.stringify(
+        {
+          origin: typeof window !== "undefined" ? window.location.origin : "",
+          href: typeof window !== "undefined" ? window.location.href : "",
+        },
+        null,
+        2
+      ),
+    });
+  } finally {
+    setLoading(false);
+  }
+};
 
   return (
     <div className="min-h-screen bg-slate-50 px-6 py-10 text-slate-900">
