@@ -10,7 +10,10 @@ from bs4 import BeautifulSoup
 MALL_ID = os.environ.get("CAFE24_MALL_ID")
 CLIENT_ID = os.environ.get("CAFE24_CLIENT_ID")
 CLIENT_SECRET = os.environ.get("CAFE24_CLIENT_SECRET")
-REFRESH_TOKEN = os.environ.get("CAFE24_REFRESH_TOKEN")
+BOOTSTRAP_REFRESH_TOKEN = os.environ.get("CAFE24_REFRESH_TOKEN")
+
+SUPABASE_URL = os.environ.get("SUPABASE_URL")
+SUPABASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
 
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -27,15 +30,63 @@ def validate_env():
         "CAFE24_MALL_ID": MALL_ID,
         "CAFE24_CLIENT_ID": CLIENT_ID,
         "CAFE24_CLIENT_SECRET": CLIENT_SECRET,
-        "CAFE24_REFRESH_TOKEN": REFRESH_TOKEN,
+        "SUPABASE_URL": SUPABASE_URL,
+        "SUPABASE_SERVICE_ROLE_KEY": SUPABASE_SERVICE_ROLE_KEY,
     }
     missing = [key for key, value in required.items() if not value]
     if missing:
         raise ValueError(f"필수 환경변수가 없습니다: {', '.join(missing)}")
 
 
-def refresh_access_token() -> str:
+def supabase_headers():
+    return {
+        "apikey": SUPABASE_SERVICE_ROLE_KEY,
+        "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
+        "Content-Type": "application/json",
+    }
+
+
+def load_refresh_token() -> str:
     validate_env()
+
+    url = (
+        f"{SUPABASE_URL}/rest/v1/app_secrets"
+        f"?key=eq.cafe24_refresh_token&select=value"
+    )
+    res = requests.get(url, headers=supabase_headers(), timeout=15)
+    res.raise_for_status()
+
+    data = res.json()
+    if data and isinstance(data, list) and len(data) > 0:
+        token = data[0].get("value")
+        if token:
+            return token
+
+    if BOOTSTRAP_REFRESH_TOKEN:
+        return BOOTSTRAP_REFRESH_TOKEN
+
+    raise ValueError("사용 가능한 refresh token이 없습니다.")
+
+
+def save_refresh_token(new_token: str):
+    if not new_token:
+        return
+
+    url = f"{SUPABASE_URL}/rest/v1/app_secrets"
+    payload = {
+        "key": "cafe24_refresh_token",
+        "value": new_token,
+    }
+
+    headers = supabase_headers()
+    headers["Prefer"] = "resolution=merge-duplicates"
+
+    res = requests.post(url, headers=headers, json=payload, timeout=15)
+    res.raise_for_status()
+
+
+def refresh_access_token() -> str:
+    refresh_token = load_refresh_token()
 
     url = f"https://{MALL_ID}.cafe24api.com/api/v2/oauth/token"
     auth_str = f"{CLIENT_ID}:{CLIENT_SECRET}"
@@ -49,7 +100,7 @@ def refresh_access_token() -> str:
         },
         data={
             "grant_type": "refresh_token",
-            "refresh_token": REFRESH_TOKEN,
+            "refresh_token": refresh_token,
         },
         timeout=20,
     )
@@ -59,6 +110,11 @@ def refresh_access_token() -> str:
     access_token = data.get("access_token")
     if not access_token:
         raise ValueError("카페24 access_token을 받지 못했습니다.")
+
+    rotated_refresh_token = data.get("refresh_token")
+    if rotated_refresh_token and rotated_refresh_token != refresh_token:
+        save_refresh_token(rotated_refresh_token)
+
     return access_token
 
 
@@ -229,13 +285,6 @@ class handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(body)
-
-    def do_OPTIONS(self):
-        self.send_response(204)
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
-        self.end_headers()
 
     def do_POST(self):
         try:
