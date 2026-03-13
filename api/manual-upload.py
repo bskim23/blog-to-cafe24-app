@@ -218,44 +218,39 @@ def normalize_naver_url(url):
     raise ValueError("네이버 블로그 글 주소 형식을 인식하지 못했습니다.")
 
 
-def download_and_upload_image(access_token, src, referer):
+def download_and_upload(access_token, src, referer):
     try:
-        clean_src = src.split("?")[0] + "?type=w2000" if "pstatic.net" in src else src
+        clean_src = src.split('?')[0] + "?type=w2000" if 'pstatic.net' in src else src
         img_res = requests.get(
             clean_src,
             headers={"User-Agent": USER_AGENT, "Referer": referer},
-            timeout=20,
+            timeout=20
         )
-
-        if img_res.status_code != 200 or len(img_res.content) <= MIN_BYTES_KEEP:
-            return None
-
-        b64 = base64.b64encode(img_res.content).decode()
-
-        up_url = f"https://{MALL_ID}.cafe24api.com/api/v2/admin/products/images"
-        headers = {
-            "Authorization": f"Bearer {access_token}",
-            "Content-Type": "application/json",
-            "X-Cafe24-Api-Version": API_VERSION,
-        }
-        payload = {"requests": [{"image": b64}]}
-
-        up_res = requests.post(up_url, headers=headers, json=payload, timeout=30)
-        if up_res.status_code not in [200, 201]:
-            return None
-
-        img_data = up_res.json()["images"][0]
-        return img_data.get("url") or img_data.get("path")
+        if img_res.status_code == 200 and len(img_res.content) > MIN_BYTES_KEEP:
+            b64 = base64.b64encode(img_res.content).decode()
+            up_url = f"https://{MALL_ID}.cafe24api.com/api/v2/admin/products/images"
+            headers = {
+                "Authorization": f"Bearer {access_token}",
+                "Content-Type": "application/json",
+                "X-Cafe24-Api-Version": "2025-12-01"
+            }
+            payload = {"requests": [{"image": b64}]}
+            up_res = requests.post(up_url, headers=headers, json=payload, timeout=30)
+            if up_res.status_code in [200, 201]:
+                img_data = up_res.json()["images"][0]
+                return img_data.get("url") or img_data.get("path")
     except Exception:
         return None
+    return None
 
 
 def parse_naver_post(url, access_token):
     real_url = normalize_naver_url(url)
 
-    res = requests.get(real_url, headers={"User-Agent": USER_AGENT}, timeout=20)
-    res.raise_for_status()
-    soup = BeautifulSoup(res.text, "html.parser")
+    soup = BeautifulSoup(
+        requests.get(real_url, headers={"User-Agent": USER_AGENT}).text,
+        "html.parser"
+    )
 
     title_el = soup.select_one(".se-title-text span") or soup.select_one(".pcol1 .title")
     if not title_el:
@@ -267,9 +262,7 @@ def parse_naver_post(url, access_token):
     if not content_area:
         raise ValueError("본문 영역을 찾지 못했습니다. 비공개 글이거나 구조가 다를 수 있습니다.")
 
-    html_parts = [
-        f'<div style="font-size:{BASE_FONT_SIZE}px; line-height:1.8; color:#333; word-break:keep-all;">'
-    ]
+    html_parts = [f'<div style="font-size:{BASE_FONT_SIZE}px; line-height:1.8; color:#333; word-break:keep-all;">']
     first_valid_image = None
     seen = set()
 
@@ -277,38 +270,35 @@ def parse_naver_post(url, access_token):
         if el in seen:
             continue
 
-        img_tag = el.find("img") if el.name != "img" else el
-        el_classes = el.get("class") or []
-        is_image_block = (el.name == "img") or any("se-image" in cls for cls in el_classes)
+        img_tag = el.find('img') if el.name != 'img' else el
 
-        if img_tag and is_image_block:
-            src = img_tag.get("data-src") or img_tag.get("src")
-            if src and not src.endswith(".svg"):
-                uploaded_path = download_and_upload_image(access_token, src, real_url)
+        if img_tag and ((el.get('class') and any('se-image' in c for c in el.get('class'))) or el.name == 'img'):
+            src = img_tag.get('data-src') or img_tag.get('src')
+            if src and not src.endswith('.svg'):
+                uploaded_path = download_and_upload(access_token, src, real_url)
                 if uploaded_path:
                     if not first_valid_image:
                         first_valid_image = uploaded_path
                     html_parts.append(
                         f'<div style="margin:35px 0; text-align:center;">'
                         f'<img src="{uploaded_path}" style="max-width:100%; height:auto; border-radius:12px;">'
-                        f"</div>"
+                        f'</div>'
                     )
 
-            for child in el.find_all():
-                seen.add(child)
+            for c in el.find_all():
+                seen.add(c)
             seen.add(el)
-            continue
 
-        if "se-text-paragraph" in el_classes:
-            inner_html = re.sub(r'class="[^"]*"', "", str(el))
-            inner_html = re.sub(r'font-size:[^;"]*;?', "", inner_html)
+        elif el.get('class') and 'se-text-paragraph' in el.get('class'):
+            inner_html = re.sub(r'class="[^"]*"', '', str(el))
+            inner_html = re.sub(r'font-size:[^;"]*;?', '', inner_html)
             html_parts.append(f'<div style="margin-bottom:18px;">{inner_html}</div>')
             seen.add(el)
 
     html_parts.append(
         f'<div style="margin-top:32px; font-size:14px; color:#666;">'
         f'원문: <a href="{real_url}" target="_blank">네이버 블로그 원문 보기</a>'
-        f"</div>"
+        f'</div>'
     )
     html_parts.append("</div>")
 
