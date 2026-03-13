@@ -295,7 +295,8 @@ def upload_to_cafe24_img(access_token, b64, debug_item):
         debug_item["upload_response"] = safe_json_or_text(res)
 
         if res.status_code in [200, 201]:
-            image_url = res.json()["images"][0].get("url")
+            image_data = res.json()["images"][0]
+            image_url = image_data.get("url") or image_data.get("path")
             debug_item["uploaded_url"] = image_url
             return image_url
 
