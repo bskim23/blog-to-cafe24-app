@@ -11,6 +11,7 @@ type UploadResult = {
   detail?: string;
   result?: unknown;
   raw?: string;
+  debug?: unknown;
 };
 
 export default function Home() {
@@ -152,12 +153,20 @@ export default function Home() {
                   <div className="break-all">원문 주소: {result.sourceUrl}</div>
                 )}
                 {result.message && <div className="mt-2">메시지: {result.message}</div>}
+
                 {result.detail && (
                   <pre className="mt-3 overflow-x-auto whitespace-pre-wrap rounded-xl bg-white/70 p-3 text-xs">
                     {result.detail}
                   </pre>
                 )}
-                {!result.success && result.raw && !result.detail && (
+
+                {result.debug && (
+                  <pre className="mt-3 overflow-x-auto whitespace-pre-wrap rounded-xl bg-white/70 p-3 text-xs">
+                    {JSON.stringify(result.debug, null, 2)}
+                  </pre>
+                )}
+
+                {result.raw && !result.detail && !result.debug && (
                   <pre className="mt-3 overflow-x-auto whitespace-pre-wrap rounded-xl bg-white/70 p-3 text-xs">
                     {result.raw}
                   </pre>
