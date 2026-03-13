@@ -1,12 +1,7 @@
 name: Naver Blog to Cafe24 Sync
 
 on:
-  schedule:
-    # 12시간마다 실행 (UTC 기준 00:00, 12:00)
-    # 한국 시간(KST) 기준: 오전 09:00, 오후 21:00
-    - cron: '0 0,12 * * *'
   workflow_dispatch:
-    # GitHub 레포지토리 Actions 탭에서 수동으로 실행 가능
 
 jobs:
   build:
